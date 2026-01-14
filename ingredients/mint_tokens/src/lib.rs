@@ -1,19 +1,19 @@
 use std::error::Error;
 
-use utils::{get_or_create_keypair, get_rpc_client, print_transaction_url};
 use solana_sdk::{
     instruction::Instruction, pubkey::Pubkey, signature::Keypair, signer::Signer,
     transaction::Transaction,
 };
+use utils::{get_or_create_keypair, get_rpc_client, print_transaction_url};
 //use solana_zk_sdk::encryption::pod::elgamal::PodElGamalCiphertext;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
-    //extension::confidential_mint_burn, 
-    instruction::mint_to, 
+    //extension::confidential_mint_burn,
+    instruction::mint_to,
     solana_zk_sdk::encryption::{
-        //auth_encryption::AeKey, 
-        elgamal::ElGamalKeypair
-    }
+        //auth_encryption::AeKey,
+        elgamal::ElGamalKeypair,
+    },
 };
 // use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
 
@@ -21,7 +21,7 @@ pub async fn go_with_confidential_mintburn(
     _mint_authority: &Keypair,
     _token_account_owner: &Pubkey,
     _mint_amount: u64,
-    _supply_elgamal_pubkey: &ElGamalKeypair
+    _supply_elgamal_pubkey: &ElGamalKeypair,
 ) -> Result<(), Box<dyn Error>> {
     Err("Not yet implemented".into())
 
@@ -38,7 +38,7 @@ pub async fn go_with_confidential_mintburn(
     // // Instruction to mint tokens
     // let context_state_dummy = Pubkey::new_unique();
 
-    // let confidential_mint_instructions = 
+    // let confidential_mint_instructions =
     //     confidential_mint_burn::instruction::confidential_mint_with_split_proofs(
     //         &spl_token_2022::id(),
     //         &receiving_token_account,
@@ -51,7 +51,7 @@ pub async fn go_with_confidential_mintburn(
     //         ProofLocation::ContextStateAccount(&context_state_dummy),
     //         ProofLocation::ContextStateAccount(&context_state_dummy),
     //         ProofLocation::ContextStateAccount(&context_state_dummy),
-    //         AeKey::new_rand().encrypt(mint_amount).into()            
+    //         AeKey::new_rand().encrypt(mint_amount).into()
     // )?;
 
     // let transaction = Transaction::new_signed_with_payer(
@@ -73,7 +73,7 @@ pub async fn go_with_confidential_mintburn(
 pub async fn go(
     mint_authority: &Keypair,
     token_account_owner: &Pubkey,
-    mint_amount: u64
+    mint_amount: u64,
 ) -> Result<(), Box<dyn Error>> {
     let client = get_rpc_client()?;
     let mint = get_or_create_keypair("mint")?;
@@ -81,7 +81,7 @@ pub async fn go(
 
     let receiving_token_account = get_associated_token_address_with_program_id(
         &token_account_owner, // Token account owner
-        &mint.pubkey(),        // Mint
+        &mint.pubkey(),       // Mint
         &spl_token_2022::id(),
     );
 
@@ -89,10 +89,10 @@ pub async fn go(
     let mint_to_instruction: Instruction = mint_to(
         &spl_token_2022::id(),
         &mint.pubkey(),              // Mint
-        &receiving_token_account,     // Token account to mint to
-        &mint_authority.pubkey(),         // Token account owner
+        &receiving_token_account,    // Token account to mint to
+        &mint_authority.pubkey(),    // Token account owner
         &[&mint_authority.pubkey()], // Additional signers (mint authority)
-        mint_amount,                      // Amount to mint
+        mint_amount,                 // Amount to mint
     )?;
 
     let transaction = Transaction::new_signed_with_payer(

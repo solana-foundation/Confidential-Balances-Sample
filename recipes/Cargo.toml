@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 solana-sdk = { workspace = true }
 tokio = { workspace = true }
-solana-zk-sdk = { workspace = true }
+spl-token-2022 = { workspace = true }
 setup_participants = { path = "../ingredients/setup_participants" }
 setup_mint = { path = "../ingredients/setup_mint" }
 setup_token_account = { path = "../ingredients/setup_token_account" }

@@ -8,20 +8,19 @@ members = [
 
 [workspace.dependencies]
 # Solana dependencies
-solana-sdk = "2.1.11"
-solana-client = "2.1.11"
-solana-transaction-status-client-types = "2.1.11"
-solana-zk-sdk = "2.1.11"
+solana-sdk = "3.0.0"
+solana-client = "3.1.6"
+solana-transaction-status-client-types = "3.1.6"
 
 # SPL dependencies
-spl-token-2022 = { git = "https://github.com/kilogold/token-2022.git", branch = "cli_transaction_generation" }
-spl-token-client = { git = "https://github.com/kilogold/token-2022.git", branch = "cli_transaction_generation" }
-spl-associated-token-account = { git = "https://github.com/solana-labs/solana-program-library.git", rev = "224a96b164357a221c7f7dae5e348f9c0f7a73da" }
-spl-token-confidential-transfer-proof-generation = { git = "https://github.com/kilogold/token-2022.git", branch = "cli_transaction_generation" }
-spl-token-confidential-transfer-proof-extraction = { git = "https://github.com/kilogold/token-2022.git", branch = "cli_transaction_generation" }
+spl-token-2022 = "10.0.0"
+spl-token-2022-interface = "2.1.0"
+spl-token-client = "0.18.0"
+spl-associated-token-account = "8.0.0"
+spl-token-confidential-transfer-proof-generation = "0.5.1"
+spl-token-confidential-transfer-proof-extraction = "0.5.1"
 
 # Other dependencies
-tk-rs = { git = "https://github.com/kilogold/tk-rs.git" }
 tokio = { version = "1.42.0", features = ["full"] }
 serde = "1.0.215"
 serde_json = "1.0.1"

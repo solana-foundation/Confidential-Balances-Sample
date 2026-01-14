@@ -1,6 +1,5 @@
 use std::error::Error;
 
-use utils::{get_or_create_keypair, get_rpc_client, print_transaction_url};
 use solana_sdk::{signer::Signer, transaction::Transaction};
 use spl_associated_token_account::{
     get_associated_token_address_with_program_id, instruction::create_associated_token_account,
@@ -14,12 +13,12 @@ use spl_token_2022::{
     instruction::reallocate,
     solana_zk_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
 };
-use spl_token_confidential_transfer_proof_extraction::instruction::{ProofData, ProofLocation};
+use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
+use utils::{get_or_create_keypair, get_rpc_client, print_transaction_url};
 
 pub async fn setup_token_account(
-    token_account_authority: &dyn Signer
+    token_account_authority: &dyn Signer,
 ) -> Result<(), Box<dyn Error>> {
-
     let client = get_rpc_client()?;
     let mint = get_or_create_keypair("mint")?;
     let fee_payer_keypair = get_or_create_keypair("fee_payer_keypair")?;
@@ -71,21 +70,18 @@ pub async fn setup_token_account(
 
     // `InstructionOffset` indicates that proof is included in the same transaction
     // This means that the proof instruction offset must be always be 1.
-    let proof_location = ProofLocation::InstructionOffset(
-        1.try_into().unwrap(),
-        ProofData::InstructionData(&proof_data),
-    );
+    let proof_location = ProofLocation::InstructionOffset(1.try_into().unwrap(), &proof_data);
 
     // Instructions to configure the token account, including the proof instruction
     // Appends the `VerifyPubkeyValidityProof` instruction right after the `ConfigureAccount` instruction.
     let configure_account_instruction = configure_account(
-        &spl_token_2022::id(),                 // Program ID
-        &token_account_pubkey,                 // Token account
-        &mint.pubkey(),                        // Mint
-        &decryptable_balance.into(),             // Initial balance
+        &spl_token_2022::id(),                  // Program ID
+        &token_account_pubkey,                  // Token account
+        &mint.pubkey(),                         // Mint
+        &decryptable_balance.into(),            // Initial balance
         maximum_pending_balance_credit_counter, // Maximum pending balance credit counter
-        &token_account_authority.pubkey(),     // Token Account Owner
-        &[],                                   // Additional signers
+        &token_account_authority.pubkey(),      // Token Account Owner
+        &[],                                    // Additional signers
         proof_location,                         // Proof location
     )
     .unwrap();

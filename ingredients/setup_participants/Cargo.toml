@@ -11,3 +11,4 @@ path = "src/lib.rs"
 utils = { path = "../../utils" }
 tokio = { workspace = true }
 solana-sdk = { workspace = true }
+solana-system-interface = "2.0.0"
