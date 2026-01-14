@@ -11,4 +11,3 @@ spl-associated-token-account = { workspace = true }
 
 # For Confidential MintBurn
 spl-token-confidential-transfer-proof-extraction = { workspace = true }
-solana-zk-sdk = { workspace = true }

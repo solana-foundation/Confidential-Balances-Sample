@@ -7,5 +7,6 @@ edition = "2021"
 utils = { path = "../../utils" }
 solana-sdk = { workspace = true }
 spl-token-2022 = { workspace = true }
+spl-token-2022-interface = { workspace = true }
 spl-token-client = { workspace = true }
 spl-associated-token-account = { workspace = true }

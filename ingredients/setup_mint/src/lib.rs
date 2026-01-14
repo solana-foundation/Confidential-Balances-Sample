@@ -1,10 +1,19 @@
 use {
-    utils::{get_or_create_keypair, get_rpc_client, print_transaction_url, record_value}, solana_sdk::{
-        signature::Keypair, signer::Signer, system_instruction::create_account, transaction::Transaction
-    }, spl_token_2022::{extension::ExtensionType, instruction::initialize_mint, solana_zk_sdk::encryption::elgamal::ElGamalKeypair, state::Mint}, spl_token_client::token::ExtensionInitializationParams, std::{error::Error, sync::Arc}
+    solana_sdk::{signature::Keypair, signer::Signer, transaction::Transaction},
+    solana_system_interface::instruction::create_account,
+    spl_token_2022::{
+        extension::ExtensionType, instruction::initialize_mint,
+        solana_zk_sdk::encryption::elgamal::ElGamalKeypair, state::Mint,
+    },
+    spl_token_client::token::ExtensionInitializationParams,
+    std::{error::Error, sync::Arc},
+    utils::{get_or_create_keypair, get_rpc_client, print_transaction_url, record_value},
 };
 
-pub async fn create_mint(absolute_authority: &Keypair, auditor_elgamal_keypair: &ElGamalKeypair) -> Result<(), Box<dyn Error>> {
+pub async fn create_mint(
+    absolute_authority: &Keypair,
+    auditor_elgamal_keypair: &ElGamalKeypair,
+) -> Result<(), Box<dyn Error>> {
     let fee_payer_keypair = Arc::new(get_or_create_keypair("fee_payer_keypair")?);
     let client = get_rpc_client()?;
     let mint = get_or_create_keypair("mint")?;
@@ -45,10 +54,7 @@ pub async fn create_mint(absolute_authority: &Keypair, auditor_elgamal_keypair: 
     let extension_instruction =
         confidential_transfer_mint_extension.instruction(&spl_token_2022::id(), &mint.pubkey())?;
 
-    let instructions = vec![
-        create_account_instruction,
-        extension_instruction,
-    ];
+    let instructions = vec![create_account_instruction, extension_instruction];
 
     let recent_blockhash = client.get_latest_blockhash()?;
     let transaction = Transaction::new_signed_with_payer(
@@ -58,7 +64,8 @@ pub async fn create_mint(absolute_authority: &Keypair, auditor_elgamal_keypair: 
         recent_blockhash,
     );
 
-    { // Add `initialize_mint_instruction` to the signed transaction
+    {
+        // Add `initialize_mint_instruction` to the signed transaction
 
         let mut transaction = transaction;
 
@@ -73,24 +80,29 @@ pub async fn create_mint(absolute_authority: &Keypair, auditor_elgamal_keypair: 
         )?;
 
         {
-            let mut unique_pubkeys: std::collections::HashSet<_> = transaction.message.account_keys.iter().cloned().collect();
+            let mut unique_pubkeys: std::collections::HashSet<_> =
+                transaction.message.account_keys.iter().cloned().collect();
             transaction.message.account_keys.extend(
                 initialize_mint_instruction
                     .accounts
                     .iter()
                     .map(|account| account.pubkey)
-                    .filter(|pubkey| unique_pubkeys.insert(*pubkey))
+                    .filter(|pubkey| unique_pubkeys.insert(*pubkey)),
             );
         }
 
-        let compiled_initialize_mint_instruction = 
-            transaction.message.compile_instruction(&initialize_mint_instruction);
-        
-        transaction.message.instructions.push(compiled_initialize_mint_instruction);
+        let compiled_initialize_mint_instruction = transaction
+            .message
+            .compile_instruction(&initialize_mint_instruction);
+
+        transaction
+            .message
+            .instructions
+            .push(compiled_initialize_mint_instruction);
 
         transaction.sign(
             &[&fee_payer_keypair, &mint as &dyn Signer],
-            recent_blockhash
+            recent_blockhash,
         );
 
         let transaction_signature = client.send_and_confirm_transaction(&transaction)?;

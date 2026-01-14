@@ -1,27 +1,29 @@
 use std::{error::Error, sync::Arc};
 
-use utils::{
-    get_non_blocking_rpc_client, get_or_create_keypair, get_rpc_client, load_value, print_transaction_url,
-};
 use solana_sdk::{signer::Signer, transaction::Transaction};
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     error::TokenError,
     extension::{
-        confidential_transfer::{
-            account_info::ApplyPendingBalanceAccountInfo, instruction, ConfidentialTransferAccount,
-        },
+        confidential_transfer::account_info::ApplyPendingBalanceAccountInfo,
         BaseStateWithExtensions,
     },
     solana_zk_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
+};
+use spl_token_2022_interface::extension::confidential_transfer::{
+    instruction, ConfidentialTransferAccount,
 };
 use spl_token_client::{
     client::{ProgramRpcClient, ProgramRpcClientSendTransaction},
     token::Token,
 };
+use utils::{
+    get_non_blocking_rpc_client, get_or_create_keypair, get_rpc_client, load_value,
+    print_transaction_url,
+};
 
 pub async fn apply_pending_balance(
-    token_account_authority: &dyn Signer
+    token_account_authority: &dyn Signer,
 ) -> Result<(), Box<dyn Error>> {
     let fee_payer_keypair = Arc::new(get_or_create_keypair("fee_payer_keypair")?);
     let client = get_rpc_client()?;
@@ -33,13 +35,13 @@ pub async fn apply_pending_balance(
         &mint.pubkey(),
         &spl_token_2022::id(),
     );
-    
+
     let sender_elgamal_keypair =
         ElGamalKeypair::new_from_signer(&token_account_authority, &token_account_pubkey.to_bytes())
             .unwrap();
     let sender_aes_key =
         AeKey::new_from_signer(&token_account_authority, &token_account_pubkey.to_bytes()).unwrap();
-    
+
     // The "pending" balance must be applied to "available" balance before it can be transferred
 
     // A "non-blocking" RPC client (for async calls)
@@ -60,9 +62,7 @@ pub async fn apply_pending_balance(
     };
 
     // Get sender token account data
-    let token_account_info = token
-        .get_account_info(&token_account_pubkey)
-        .await?;
+    let token_account_info = token.get_account_info(&token_account_pubkey).await?;
 
     // Unpack the ConfidentialTransferAccount extension portion of the token account data
     let confidential_transfer_account =
@@ -84,11 +84,11 @@ pub async fn apply_pending_balance(
     // Create a `ApplyPendingBalance` instruction
     let apply_pending_balance_instruction = instruction::apply_pending_balance(
         &spl_token_2022::id(),
-        &token_account_pubkey,         // Token account
+        &token_account_pubkey,                     // Token account
         expected_pending_balance_credit_counter, // Expected number of times the pending balance has been credited
         &new_decryptable_available_balance.into(), // Cipher text of the new decryptable available balance
-        &token_account_authority.pubkey(),                       // Token account owner
-        &[&token_account_authority.pubkey()],                    // Additional signers
+        &token_account_authority.pubkey(),         // Token account owner
+        &[&token_account_authority.pubkey()],      // Additional signers
     )?;
 
     let recent_blockhash = client.get_latest_blockhash()?;
