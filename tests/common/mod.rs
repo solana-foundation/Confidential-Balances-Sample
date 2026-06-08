@@ -12,13 +12,13 @@ use spl_associated_token_account::{
     get_associated_token_address_with_program_id,
     instruction::create_associated_token_account,
 };
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
 use spl_token_2022::{
     extension::{
         confidential_transfer::instruction::initialize_mint,
         ExtensionType,
     },
     instruction::initialize_mint as initialize_mint_base,
-    solana_zk_sdk::encryption::elgamal::ElGamalKeypair,
     state::Mint,
 };
 use std::env;
@@ -179,8 +179,7 @@ pub fn create_confidential_mint(
     );
 
     // Initialize confidential transfer extension
-    // Convert ElGamalPubkey to PodElGamalPubkey
-    let auditor_pubkey_pod: spl_token_2022::solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey =
+    let auditor_pubkey_pod: solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey =
         (*auditor_elgamal.pubkey()).into();
 
     let init_ct_ix = initialize_mint(

@@ -8,40 +8,35 @@ name = "demo-server"
 path = "src/bin/demo-server.rs"
 
 [dependencies]
-# Solana Core. zk-sdk is at 6.0.1 because the deployed devnet ZK ElGamal Proof
-# program now expects 6.0.1-format proofs. spl-token-2022 = 10.0.0 still
-# transitively pulls zk-sdk 4.0 for its own API surface, so we sidestep the
-# boundary using `ProofLocation::ContextStateAccount` (a phantom-typed Pubkey
-# that doesn't carry proof bytes) and pre-verify proofs ourselves.
-solana-sdk = "3.0.0"
-solana-client = "3.1.6"
+# Solana Core (agave v4). The whole graph is on solana-zk-sdk 6.0.1 now:
+# spl-token-2022 11.0.0 targets it natively, so there's no 4.0 ↔ 6.0.1 split
+# and no byte-casting across a version boundary.
+solana-sdk = "4.0.1"
+# Must be the 4.1 line, not 4.0.0 stable: token-2022 11 needs
+# solana-system-interface 3.2 (-> solana-instruction >=3.4), but solana-client
+# 4.0.0 caps solana-instruction <3.4. 4.1.0-beta.3 is the first published
+# client that lifts that cap. Bump to 4.1 stable once it's cut.
+solana-client = "4.1.0-beta.3"
 solana-zk-sdk = "6.0.1"
-solana-system-program = "3.1.6"
-solana-system-interface = { version = "3.0.0", features = ["bincode"] }
+solana-system-interface = { version = "3.2.0", features = ["bincode"] }
 
-# SPL Token-2022. proof-extraction stays at 0.5.1 (matches spl-token-2022's
-# transitive) so we can name the legacy `ProofLocation` type at the boundary.
-# proof-generation jumps to 0.6.0 (zk-sdk 6.0.1) for the actual proof bytes.
-spl-token-2022 = { version = "10.0.0", features = ["zk-ops"] }
-spl-token-client = "0.18.0"
+# SPL Token-2022 (agave v4 aligned). token-2022 11.0.0 builds on zk-sdk 6.0.1
+# and proof-{extraction,generation} 0.6.0 directly.
+spl-token-2022 = { version = "11.0.0", features = ["zk-ops"] }
 spl-associated-token-account = "8.0.0"
-spl-token-confidential-transfer-proof-extraction = "0.5.1"
+spl-token-confidential-transfer-proof-extraction = "0.6.0"
 spl-token-confidential-transfer-proof-generation = "0.6.0"
 
-# Bypass-mode helpers
+# ZK ElGamal proof-program helpers (create/verify/close context state accounts).
 solana-zk-elgamal-proof-interface = "0.1.2"
-solana-zk-sdk-pod = "0.1.1"
+solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
-bytemuck = "1.25"
-# Record program: stages the oversized range proof off-tx so the verify ix
-# fits, via encode_verify_proof_from_account.
-spl-record = { version = "0.4.0", features = ["no-entrypoint"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
 # Commitment config
-solana-commitment-config = "3.1.0"
+solana-commitment-config = "3.1.1"
 
 # Demo server
 axum = "0.7"
@@ -65,4 +60,4 @@ serde_json = "1.0"
 # solana-test-validator = "=4.0.0-rc.0"
 env_logger = "0.11"
 serde_json = "1.0"
-solana-commitment-config = "3.1.0"
+solana-commitment-config = "3.1.1"

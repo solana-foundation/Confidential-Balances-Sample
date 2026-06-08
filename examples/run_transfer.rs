@@ -15,7 +15,6 @@ use solana_zk_sdk::encryption::{
     auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
-use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     extension::{
@@ -58,21 +57,12 @@ fn display_balances(
     // Public balance
     let public_balance = account.base.amount;
 
-    // 4.0 POD ciphertexts on chain → 6.0.1 PODs via byte cast → ElGamalCiphertext.
-    let pending_lo_pod = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.pending_balance_lo)
-            .try_into()
-            .map_err(|_| "pending_balance_lo size")?,
-    );
-    let pending_hi_pod = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.pending_balance_hi)
-            .try_into()
-            .map_err(|_| "pending_balance_hi size")?,
-    );
-    let pending_lo: ElGamalCiphertext = pending_lo_pod
+    let pending_lo: ElGamalCiphertext = ct_extension
+        .pending_balance_lo
         .try_into()
         .map_err(|e| format!("decode pending_lo: {e:?}"))?;
-    let pending_hi: ElGamalCiphertext = pending_hi_pod
+    let pending_hi: ElGamalCiphertext = ct_extension
+        .pending_balance_hi
         .try_into()
         .map_err(|e| format!("decode pending_hi: {e:?}"))?;
 
@@ -85,11 +75,10 @@ fn display_balances(
     let pending_total = pending_lo_amount + (pending_hi_amount << 16);
 
     // Decrypt available balance using AES (cheap relative to ElGamal DLP).
-    let avail_aes_bytes: [u8; 36] = bytemuck::bytes_of(&ct_extension.decryptable_available_balance)
+    let decryptable_balance: AeCiphertext = ct_extension
+        .decryptable_available_balance
         .try_into()
-        .map_err(|_| "decryptable_available_balance size")?;
-    let decryptable_balance =
-        AeCiphertext::from_bytes(&avail_aes_bytes).ok_or("decode AeCiphertext")?;
+        .map_err(|e| format!("decode AeCiphertext: {e:?}"))?;
     let available_balance = aes_key.decrypt(&decryptable_balance).unwrap_or(0);
 
     // Format amounts with decimals
@@ -148,11 +137,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mint = {
         use solana_sdk::transaction::Transaction;
         use solana_system_interface::instruction as system_instruction;
-        use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey as PodElGamalPubkeyV6;
+        use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
         use spl_token_2022::{
             extension::{confidential_transfer::instruction::initialize_mint, ExtensionType},
             instruction::initialize_mint as initialize_mint_base,
-            solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey as PodElGamalPubkeyLegacy,
             state::Mint,
         };
 
@@ -162,11 +150,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ])?;
         let rent = client.get_minimum_balance_for_rent_exemption(space)?;
 
-        // Auditor key derived in 6.0.1; the on-chain mint stores it as the
-        // legacy PodElGamalPubkey type (identical wire format, byte-cast).
         let auditor_elgamal = ElGamalKeypair::new_rand();
-        let auditor_pod_v6: PodElGamalPubkeyV6 = (*auditor_elgamal.pubkey()).into();
-        let auditor_pubkey_pod = PodElGamalPubkeyLegacy::from(auditor_pod_v6.0);
+        let auditor_pubkey_pod: PodElGamalPubkey = (*auditor_elgamal.pubkey()).into();
 
         let create_account_ix = system_instruction::create_account(
             &payer.pubkey(),

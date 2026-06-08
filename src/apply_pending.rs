@@ -1,15 +1,18 @@
 //! Apply pending balance to available balance.
 //!
-//! Decrypts pending + available balances using `solana-zk-sdk = 6.0.1` keys,
-//! re-encrypts the new available balance with AES, and submits the
-//! `ApplyPendingBalance` instruction. The new AES ciphertext is byte-cast to
-//! the legacy `PodAeCiphertext` type that `spl-token-2022 = 10.0.0` expects.
+//! Decrypts pending + available balances, re-encrypts the new available
+//! balance with AES, and submits the `ApplyPendingBalance` instruction. Every
+//! type is solana-zk-sdk 6.0.1, matching spl-token-2022 11.0.0's account
+//! layout directly.
 
 use crate::types::*;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{signature::Signer, transaction::Transaction};
-use solana_zk_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair};
-use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
+use solana_zk_sdk::encryption::{
+    auth_encryption::AeKey,
+    elgamal::{ElGamalCiphertext, ElGamalKeypair},
+};
+use solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     extension::{
@@ -19,7 +22,6 @@ use spl_token_2022::{
         },
         BaseStateWithExtensions, StateWithExtensions,
     },
-    solana_zk_sdk::encryption::pod::auth_encryption::PodAeCiphertext as PodAeCiphertextLegacy,
     state::Account as TokenAccount,
 };
 
@@ -43,29 +45,18 @@ pub async fn apply_pending_balance(
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
-    // Byte-cast 4.0 PodElGamalCiphertext → 6.0.1 → ElGamalCiphertext.
-    let pending_lo_v6: PodElGamalCiphertextV6 = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.pending_balance_lo)
-            .try_into()
-            .map_err(|_| "pending_balance_lo size")?,
-    );
-    let pending_hi_v6: PodElGamalCiphertextV6 = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.pending_balance_hi)
-            .try_into()
-            .map_err(|_| "pending_balance_hi size")?,
-    );
-    let available_v6: PodElGamalCiphertextV6 = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.available_balance)
-            .try_into()
-            .map_err(|_| "available_balance size")?,
-    );
-
-    let pending_lo: solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        pending_lo_v6.try_into().map_err(|e| format!("{e:?}"))?;
-    let pending_hi: solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        pending_hi_v6.try_into().map_err(|e| format!("{e:?}"))?;
-    let available_balance: solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        available_v6.try_into().map_err(|e| format!("{e:?}"))?;
+    let pending_lo: ElGamalCiphertext = ct_extension
+        .pending_balance_lo
+        .try_into()
+        .map_err(|e| format!("pending_balance_lo: {e:?}"))?;
+    let pending_hi: ElGamalCiphertext = ct_extension
+        .pending_balance_hi
+        .try_into()
+        .map_err(|e| format!("pending_balance_hi: {e:?}"))?;
+    let available_balance: ElGamalCiphertext = ct_extension
+        .available_balance
+        .try_into()
+        .map_err(|e| format!("available_balance: {e:?}"))?;
 
     let pending_lo_amount = pending_lo
         .decrypt_u32(elgamal_keypair.secret())
@@ -80,11 +71,7 @@ pub async fn apply_pending_balance(
     let pending_total = pending_lo_amount + (pending_hi_amount << 16);
     let new_available = current_available + pending_total;
 
-    // Encrypt new available with 6.0.1 AES, byte-cast to legacy PodAeCiphertext
-    // for the spl-token-2022 instruction builder.
-    let new_decryptable_v6 = aes_key.encrypt(new_available as u64);
-    let new_decryptable_legacy: PodAeCiphertextLegacy =
-        PodAeCiphertextLegacy::from(new_decryptable_v6.to_bytes());
+    let new_decryptable: PodAeCiphertext = aes_key.encrypt(new_available as u64).into();
 
     let expected_counter: u64 = ct_extension.pending_balance_credit_counter.into();
 
@@ -92,7 +79,7 @@ pub async fn apply_pending_balance(
         &spl_token_2022::id(),
         &token_account,
         expected_counter,
-        &new_decryptable_legacy,
+        &new_decryptable,
         &authority.pubkey(),
         &[&authority.pubkey()],
     )?;

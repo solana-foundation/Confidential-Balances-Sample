@@ -1,9 +1,9 @@
-//! Withdraw tokens from confidential balance to public balance (bypass mode).
+//! Withdraw tokens from confidential balance to public balance.
 //!
-//! Generates the equality + range proofs using
+//! Generates the equality + range proofs with
 //! `spl-token-confidential-transfer-proof-generation = 0.6.0`
-//! (`solana-zk-sdk = 6.0.1`), pre-verifies each into a context state account,
-//! then references those accounts in `spl-token-2022 = 10.0.0`'s withdraw ix
+//! (solana-zk-sdk 6.0.1), pre-verifies each into a context state account,
+//! then references those accounts in spl-token-2022 11.0.0's withdraw ix
 //! via `ProofLocation::ContextStateAccount`.
 
 use crate::types::*;
@@ -24,7 +24,7 @@ use solana_zk_sdk::encryption::{
     auth_encryption::AeKey,
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
-use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
+use solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     extension::{
@@ -36,7 +36,6 @@ use spl_token_2022::{
         },
         BaseStateWithExtensions, StateWithExtensions,
     },
-    solana_zk_sdk::encryption::pod::auth_encryption::PodAeCiphertext as PodAeCiphertextLegacy,
     state::Account as TokenAccount,
 };
 use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
@@ -67,13 +66,8 @@ pub async fn withdraw_from_confidential(
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
-    // 4.0 PodElGamalCiphertext → 6.0.1 → ElGamalCiphertext.
-    let available_v6: PodElGamalCiphertextV6 = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.available_balance)
-            .try_into()
-            .map_err(|_| "available_balance size")?,
-    );
-    let available_balance: ElGamalCiphertext = available_v6
+    let available_balance: ElGamalCiphertext = ct_extension
+        .available_balance
         .try_into()
         .map_err(|e| format!("decode available_balance: {e:?}"))?;
 
@@ -99,9 +93,7 @@ pub async fn withdraw_from_confidential(
 
     // New decryptable available balance after withdraw.
     let new_available = current_available - amount;
-    let new_decryptable_v6 = aes_key.encrypt(new_available);
-    let new_decryptable_legacy: PodAeCiphertextLegacy =
-        PodAeCiphertextLegacy::from(new_decryptable_v6.to_bytes());
+    let new_decryptable: PodAeCiphertext = aes_key.encrypt(new_available).into();
 
     // ----- Pre-verify equality proof into a context state account -----
     let equality_account = Keypair::new();
@@ -124,11 +116,13 @@ pub async fn withdraw_from_confidential(
         );
 
     let mut signatures: Vec<Signature> = Vec::new();
+    // Verify-with-context-state records the authority as a non-signer for
+    // the later close; only payer + the new proof account need to sign here.
     let blockhash = client.get_latest_blockhash()?;
     let tx = Transaction::new_signed_with_payer(
         &[equality_create_ix, equality_verify_ix],
         Some(&payer.pubkey()),
-        &[payer, authority, &equality_account],
+        &[payer, &equality_account],
         blockhash,
     );
     signatures.push(client.send_and_confirm_transaction(&tx)?);
@@ -156,7 +150,7 @@ pub async fn withdraw_from_confidential(
     let tx = Transaction::new_signed_with_payer(
         &[range_create_ix, range_verify_ix],
         Some(&payer.pubkey()),
-        &[payer, authority, &range_account],
+        &[payer, &range_account],
         blockhash,
     );
     signatures.push(client.send_and_confirm_transaction(&tx)?);
@@ -173,7 +167,7 @@ pub async fn withdraw_from_confidential(
         mint,
         amount,
         decimals,
-        &new_decryptable_legacy,
+        &new_decryptable,
         &authority.pubkey(),
         &[&authority.pubkey()],
         equality_loc,

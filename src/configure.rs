@@ -1,9 +1,8 @@
-//! Configure a token account for confidential transfers (bypass mode).
+//! Configure a token account for confidential transfers.
 //!
-//! Generates the PubkeyValidity proof using `solana-zk-sdk = 6.0.1`
-//! (the format the deployed devnet program expects), pre-verifies it into a
-//! context state account, and references the account in
-//! `spl-token-2022 = 10.0.0`'s `configure_account` via
+//! Generates the PubkeyValidity proof with solana-zk-sdk 6.0.1, pre-verifies
+//! it into a context state account, and references that account in
+//! spl-token-2022 11.0.0's `configure_account` via
 //! `ProofLocation::ContextStateAccount`.
 
 use crate::types::*;
@@ -24,16 +23,14 @@ use solana_zk_sdk::{
     encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
     zk_elgamal_proof_program::pubkey_validity::build_pubkey_validity_proof_data,
 };
+use solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     extension::{
-        confidential_transfer::instruction::{
-            configure_account, PubkeyValidityProofData as PubkeyValidityProofDataLegacy,
-        },
+        confidential_transfer::instruction::{configure_account, PubkeyValidityProofData},
         ExtensionType,
     },
     instruction::reallocate,
-    solana_zk_sdk::encryption::pod::auth_encryption::PodAeCiphertext as PodAeCiphertextLegacy,
 };
 use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
 use std::mem::size_of;
@@ -61,10 +58,7 @@ pub async fn configure_account_for_confidential_transfers(
 
     let max_pending_balance_credit_counter: u64 = 65536;
 
-    // 6.0.1 AeCiphertext → 4.0 PodAeCiphertext via byte cast. Wire format is
-    // identical (36 bytes); we just have two Rust types for it.
-    let decryptable_balance_v6 = aes_key.encrypt(0u64);
-    let decryptable_balance_legacy = PodAeCiphertextLegacy::from(decryptable_balance_v6.to_bytes());
+    let decryptable_balance: PodAeCiphertext = aes_key.encrypt(0u64).into();
 
     let proof_data = build_pubkey_validity_proof_data(&elgamal_keypair)
         .map_err(|e| format!("generate pubkey validity proof: {e}"))?;
@@ -100,13 +94,13 @@ pub async fn configure_account_for_confidential_transfers(
         &proof_data,
     );
 
-    let proof_location: ProofLocation<PubkeyValidityProofDataLegacy> =
+    let proof_location: ProofLocation<PubkeyValidityProofData> =
         ProofLocation::ContextStateAccount(&proof_account.pubkey());
     let configure_ixs = configure_account(
         &spl_token_2022::id(),
         &token_account,
         mint,
-        &decryptable_balance_legacy,
+        &decryptable_balance,
         max_pending_balance_credit_counter,
         &authority.pubkey(),
         &[],

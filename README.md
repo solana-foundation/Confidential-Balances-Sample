@@ -82,52 +82,46 @@ Confidential transfers require zero-knowledge proofs verified by a dedicated Sol
 ### Rust Crates
 
 ```toml
-# Solana core. zk-sdk is at 6.0.1 because the deployed devnet ZK ElGamal Proof
-# program now expects 6.0.1-format proofs.
-solana-sdk = "3.0.0"
-solana-client = "3.1.6"
+# Solana core (agave v4). The whole graph is on solana-zk-sdk 6.0.1:
+# spl-token-2022 11.0.0 targets it natively, so there is no version boundary
+# to cross and no byte-casting.
+solana-sdk = "4.0.1"
+solana-client = "4.1.0-beta.3"
 solana-zk-sdk = "6.0.1"
+solana-system-interface = "3.2.0"
 
-# SPL Token-2022. proof-extraction stays at 0.5.1 (matches spl-token-2022's
-# transitive zk-sdk 4.0) so we can name the legacy `ProofLocation` type at the
-# instruction boundary. proof-generation is on 0.6.0 (zk-sdk 6.0.1) for the
-# actual proof bytes.
-spl-token-2022 = "10.0.0"
-spl-token-client = "0.18.0"
+# SPL Token-2022 (agave v4 aligned), all on zk-sdk 6.0.1.
+spl-token-2022 = "11.0.0"
 spl-associated-token-account = "8.0.0"
 spl-token-confidential-transfer-proof-generation = "0.6.0"
-spl-token-confidential-transfer-proof-extraction = "0.5.1"
+spl-token-confidential-transfer-proof-extraction = "0.6.0"
 
-# Bypass-mode helpers (see "Bypass mode" below)
+# ZK ElGamal proof-program helpers (create/verify/close context state accounts).
 solana-zk-elgamal-proof-interface = "0.1.2"
-solana-zk-sdk-pod = "0.1.1"
+solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
-bytemuck = "1.25"
 ```
 
-### Bypass mode (the 4.0 ↔ 6.0.1 boundary)
+> **Version note: `solana-client` is pinned to `4.1.0-beta.3` on purpose.**
+> `spl-token-2022 = 11.0.0` requires `solana-system-interface 3.2`, which in
+> turn needs `solana-instruction >= 3.4`. The only stable client, `solana-client
+> 4.0.0`, caps `solana-instruction < 3.4`, so it cannot coexist with token-2022
+> 11. `4.1.0-beta.3` is the first published client that lifts that cap, so a beta
+> is required for now. Bump this to a stable `solana-client` 4.1 once it ships
+> (that is the only change needed to go fully stable).
 
-This split is a **stopgap, not a design choice**. `spl-token-client` and
-`spl-token-2022` should be on the agave v4 beta / rc crates (which target
-`solana-zk-sdk = 6.0.1` natively), but those Agave v4 crates haven't been
-published yet. Until they are, `spl-token-2022 = 10.0.0` transitively pulls
-`solana-zk-sdk = 4.0` for its public API while the deployed ZK ElGamal Proof
-program on devnet verifies 6.0.1-format proofs. This repo bridges the gap:
+Confidential transfers run entirely on `solana-zk-sdk 6.0.1`: keys and proofs
+are generated with 6.0.1, pre-verified into `ProofContextState` accounts, and
+referenced from spl-token-2022's instruction builders via
+`ProofLocation::ContextStateAccount`. token-2022 11's account fields and
+builders speak the `solana-zk-sdk-pod` POD types directly, so no version
+bridging is needed.
 
-1. Derive ElGamal + AES keys with `solana-zk-sdk = 6.0.1` directly.
-2. Generate proofs with `proof-generation = 0.6.0`.
-3. Pre-verify each proof into a `ProofContextState` account.
-4. Reference those accounts in spl-token-2022's instruction builders via
-   `ProofLocation::ContextStateAccount` — a phantom-typed `Pubkey` that
-   carries no proof bytes, so the version mismatch never crosses the FFI.
-5. Cross the type boundary only at on-chain PODs (ElGamal pubkey/ciphertext,
-   AES ciphertext) using zero-copy byte casts, since their wire format is
-   identical between 4.0 and 6.0.1.
-
-Every module in `src/` follows this pattern; `*Legacy` aliases mark the
-4.0 side of the boundary. Once the v4 crates are published, the bypass and
-the `*Legacy` aliases can be deleted and everything routes through 6.0.1
-directly.
+(A residual `solana-zk-sdk 4.0` still appears in `Cargo.lock` as transitive
+baggage from `spl-pod` and the older `spl-token-2022-interface 2.1.0` pulled by
+`spl-associated-token-account` / `solana-account-decoder`. It is off the
+confidential-transfer path and harmless; it clears once those crates move to
+`spl-token-2022-interface 3.0.0` / zk-sdk 6.0.1 upstream.)
 
 ## Quick Start
 
