@@ -9,11 +9,11 @@
 use crate::types::*;
 use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{Keypair, Signature, Signer},
-    transaction::Transaction,
-};
+use solana_pubkey::Pubkey;
+use solana_keypair::Keypair;
+use solana_signature::Signature;
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use solana_system_interface::instruction as system_instruction;
 use solana_zk_elgamal_proof_interface::{
     instruction::{close_context_state, ContextStateInfo, ProofInstruction},
@@ -47,7 +47,7 @@ use spl_token_confidential_transfer_proof_generation::transfer::transfer_split_p
 use std::mem::size_of;
 
 const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
+    solana_pubkey::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 #[allow(clippy::too_many_arguments)]
 pub async fn transfer_confidential(
@@ -364,7 +364,7 @@ pub async fn transfer_confidential_with_progress(
 /// Send a single tx, return the signature.
 fn send_tx(
     client: &RpcClient,
-    ixs: &[solana_sdk::instruction::Instruction],
+    ixs: &[solana_instruction::Instruction],
     signers: &[&dyn Signer],
     payer: &Pubkey,
 ) -> CtResult<Signature> {

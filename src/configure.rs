@@ -8,11 +8,10 @@
 use crate::types::*;
 use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{Keypair, Signer},
-    transaction::Transaction,
-};
+use solana_pubkey::Pubkey;
+use solana_keypair::Keypair;
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use solana_system_interface::instruction as system_instruction;
 use solana_zk_elgamal_proof_interface::{
     instruction::{ContextStateInfo, ProofInstruction},
@@ -36,7 +35,7 @@ use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation
 use std::mem::size_of;
 
 const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
+    solana_pubkey::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 pub async fn configure_account_for_confidential_transfers(
     client: &RpcClient,

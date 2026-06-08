@@ -7,7 +7,8 @@
 
 use crate::types::*;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{signature::Signer, transaction::Transaction};
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use solana_zk_sdk::encryption::{
     auth_encryption::AeKey,
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
@@ -29,7 +30,7 @@ pub async fn apply_pending_balance(
     client: &RpcClient,
     payer: &dyn Signer,
     authority: &dyn Signer,
-    mint: &solana_sdk::pubkey::Pubkey,
+    mint: &solana_pubkey::Pubkey,
 ) -> SigResult {
     let token_account = get_associated_token_address_with_program_id(
         &authority.pubkey(),

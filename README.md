@@ -82,11 +82,17 @@ Confidential transfers require zero-knowledge proofs verified by a dedicated Sol
 ### Rust Crates
 
 ```toml
-# Solana core (agave v4). The whole graph is on solana-zk-sdk 6.0.1:
-# spl-token-2022 11.0.0 targets it natively, so there is no version boundary
-# to cross and no byte-casting.
-solana-sdk = "4.0.1"
-solana-client = "4.1.0-beta.3"
+# Solana core via granular crates (no solana-sdk umbrella). The whole graph is
+# on solana-zk-sdk 6.0.1: spl-token-2022 11.0.0 targets it natively, so there is
+# no version boundary to cross and no byte-casting.
+solana-client = "4.0.0-rc.0"
+solana-pubkey = "4.2"        # = solana_address::Address (provides the pubkey! macro)
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-signature = "3.0"
+solana-transaction = "3.1"   # matches the rc rpc-client (3.x transaction types)
+solana-instruction = "3.4"
+solana-native-token = "3.0"
 solana-zk-sdk = "6.0.1"
 solana-system-interface = "3.2.0"
 
@@ -102,13 +108,18 @@ solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
 ```
 
-> **Version note: `solana-client` is pinned to `4.1.0-beta.3` on purpose.**
-> `spl-token-2022 = 11.0.0` requires `solana-system-interface 3.2`, which in
-> turn needs `solana-instruction >= 3.4`. The only stable client, `solana-client
-> 4.0.0`, caps `solana-instruction < 3.4`, so it cannot coexist with token-2022
-> 11. `4.1.0-beta.3` is the first published client that lifts that cap, so a beta
-> is required for now. Bump this to a stable `solana-client` 4.1 once it ships
-> (that is the only change needed to go fully stable).
+> **Version note: this uses granular Solana crates on the `4.0.0-rc.0` line, not
+> the `solana-sdk` umbrella.** `spl-token-2022 = 11.0.0` requires
+> `solana-system-interface 3.2`, which needs `solana-instruction >= 3.4`. The only
+> stable `solana-client` (4.0.0) caps `solana-instruction < 3.4`, so it can't
+> coexist with token-2022 11. The `4.0.0-rc.0` client lifts that cap, but its
+> rpc-client is built on the 3.x `solana-transaction`/`solana-message` types, so
+> we pin `solana-transaction = "3.1"` and pull the rest as granular crates rather
+> than the `solana-sdk` 4.x umbrella (which would force `transaction 4.x` and a
+> `wincode` version skew). Everything resolves to `solana-pubkey 4.2`, which is
+> `Address as Pubkey`, so `Pubkey == Address` and no conversions are needed.
+> These rc/3.x pins can collapse back to a plain `solana-sdk` once a stable
+> `solana-client` ships that allows `solana-instruction 3.4`.
 
 Confidential transfers run entirely on `solana-zk-sdk 6.0.1`: keys and proofs
 are generated with 6.0.1, pre-verified into `ProofContextState` accounts, and

@@ -7,10 +7,9 @@
 use conf_balances_examples::*;
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
-use solana_sdk::{
-    native_token::LAMPORTS_PER_SOL,
-    signature::{Keypair, Signer},
-};
+use solana_native_token::LAMPORTS_PER_SOL;
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 use solana_zk_sdk::encryption::{
     auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
@@ -30,7 +29,7 @@ fn display_balances(
     client: &RpcClient,
     account_name: &str,
     owner: &Keypair,
-    mint: &solana_sdk::pubkey::Pubkey,
+    mint: &solana_pubkey::Pubkey,
     decimals: u8,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let token_account = get_associated_token_address_with_program_id(
@@ -135,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create confidential mint
     println!("\n🏭 Creating confidential mint...");
     let mint = {
-        use solana_sdk::transaction::Transaction;
+        use solana_transaction::Transaction;
         use solana_system_interface::instruction as system_instruction;
         use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
         use spl_token_2022::{
@@ -220,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &spl_token_2022::id(),
     );
 
-    use solana_sdk::transaction::Transaction;
+    use solana_transaction::Transaction;
     let recent_blockhash = client.get_latest_blockhash()?;
     let transaction = Transaction::new_signed_with_payer(
         &[create_sender_ata, create_recipient_ata],
