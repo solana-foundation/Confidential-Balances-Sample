@@ -41,6 +41,13 @@ solana-zk-elgamal-proof-interface = "0.1.2"
 solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
 
+# Batched transfers (option 1): pack N transfer ixs into one v0 transaction
+# whose account list is compressed by an Address Lookup Table, plus a compute
+# budget bump so the batch clears the per-tx CU ceiling.
+solana-address-lookup-table-interface = { version = "3.1.0", features = ["bincode"] }
+solana-compute-budget-interface = "3.0.0"
+solana-message = "3.1"
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 

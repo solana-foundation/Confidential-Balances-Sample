@@ -627,10 +627,13 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-address 2.6.1",
+ "solana-address-lookup-table-interface",
  "solana-client",
  "solana-commitment-config",
+ "solana-compute-budget-interface",
  "solana-instruction",
  "solana-keypair",
+ "solana-message",
  "solana-native-token",
  "solana-pubkey 4.2.0",
  "solana-signature",
@@ -3121,6 +3124,16 @@ checksum = "1517aa49dcfa9cb793ef90e7aac81346d62ca4a546bb1a754030a033e3972e1c"
 dependencies = [
  "serde",
  "serde_derive",
+]
+
+[[package]]
+name = "solana-compute-budget-interface"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8292c436b269ad23cecc8b24f7da3ab07ca111661e25e00ce0e1d22771951ab9"
+dependencies = [
+ "solana-instruction",
+ "solana-sdk-ids",
 ]
 
 [[package]]

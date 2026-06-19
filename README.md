@@ -166,6 +166,16 @@ SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
 MINT_ADDRESS=<mint> \
 OWNER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example get_balances
+
+# Batched transfers from one sender, all legs in a single atomic v0 tx (option 1)
+SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
+cargo run --example batch_transfer_atomic
+
+# Batched transfers from one sender, one confirmed tx per leg (option 2)
+SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
+cargo run --example batch_transfer_pipelined
 ```
 
 **Available Operations:**
@@ -174,10 +184,24 @@ cargo run --example get_balances
 - `src/apply_pending.rs` - Apply pending balance to available balance
 - `src/withdraw.rs` - Withdraw from confidential to public balance
 - `src/transfer.rs` - Transfer confidentially between accounts (with proof context state accounts)
+- `src/batch_transfer.rs` - Batch multiple transfers from one sender (atomic v0+ALT, or pipelined)
 
 **Examples:**
 - `examples/run_transfer.rs` - Complete end-to-end transfer with balance display at each step
 - `examples/get_balances.rs` - Query and decrypt all balance types (public, pending, available)
+- `examples/batch_transfer_atomic.rs` - N transfers from one sender in a single atomic transaction
+- `examples/batch_transfer_pipelined.rs` - N transfers from one sender, one confirmed tx per leg
+
+**Batching from one sender.** Spending is a read-modify-write against the sender's opaque
+available-balance ciphertext, so transfers from one account are inherently ordered: each leg's
+equality proof binds to the ciphertext the previous leg leaves behind. `batch_transfer` exploits
+the fact that the sender holds the secret to compute the whole chain of intermediate ciphertexts
+*offline* (ElGamal subtracts homomorphically; each proof exposes the next available-balance
+ciphertext), generating every proof up front. `batch_transfer_atomic` then pre-verifies all proofs
+into context state accounts and lands every `Transfer` in one v0 transaction (an Address Lookup
+Table compresses the account list, a compute-budget bump clears the CU ceiling); in-order execution
+makes the chained proofs validate deterministically. `batch_transfer_pipelined` submits one confirmed
+transaction per leg instead, trading latency for unbounded fan-out past the single-tx size/CU limit.
 
 All operations are tested in `tests/integration_test.rs` with complete end-to-end flows.
 

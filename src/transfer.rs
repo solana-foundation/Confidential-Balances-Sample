@@ -46,7 +46,7 @@ use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation
 use spl_token_confidential_transfer_proof_generation::transfer::transfer_split_proof_data;
 use std::mem::size_of;
 
-const ZK_PROOF_PROGRAM_ID: Pubkey =
+pub(crate) const ZK_PROOF_PROGRAM_ID: Pubkey =
     solana_pubkey::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 #[allow(clippy::too_many_arguments)]
@@ -362,7 +362,7 @@ pub async fn transfer_confidential_with_progress(
 // ----------------------------------------------------------------------------
 
 /// Send a single tx, return the signature.
-fn send_tx(
+pub(crate) fn send_tx(
     client: &RpcClient,
     ixs: &[solana_instruction::Instruction],
     signers: &[&dyn Signer],
