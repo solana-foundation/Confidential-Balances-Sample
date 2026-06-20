@@ -18,7 +18,7 @@
 mod common;
 
 use conf_balances_examples::batch_transfer::{batch_transfer_atomic, TransferLeg};
-use solana_sdk::signature::Signer;
+use solana_signer::Signer;
 
 /// CU ceiling for the atomic transaction. Each pre-verified `Transfer` does
 /// ciphertext arithmetic (not full proof verification), so this leaves headroom

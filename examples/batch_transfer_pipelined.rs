@@ -14,7 +14,7 @@
 mod common;
 
 use conf_balances_examples::batch_transfer::{batch_transfer_pipelined, TransferLeg};
-use solana_sdk::signature::Signer;
+use solana_signer::Signer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
