@@ -1,31 +1,68 @@
-[workspace]
-resolver = "2"
-members = [
-    "utils",
-    "recipes",
-    "ingredients/*"
-]
+[package]
+name = "conf-balances-examples"
+version = "0.1.0"
+edition = "2021"
 
-[workspace.dependencies]
-# Solana dependencies
+[[bin]]
+name = "demo-server"
+path = "src/bin/demo-server.rs"
+
+[dependencies]
+# Solana Core. zk-sdk is at 6.0.1 because the deployed devnet ZK ElGamal Proof
+# program now expects 6.0.1-format proofs. spl-token-2022 = 10.0.0 still
+# transitively pulls zk-sdk 4.0 for its own API surface, so we sidestep the
+# boundary using `ProofLocation::ContextStateAccount` (a phantom-typed Pubkey
+# that doesn't carry proof bytes) and pre-verify proofs ourselves.
 solana-sdk = "3.0.0"
 solana-client = "3.1.6"
-solana-transaction-status-client-types = "3.1.6"
+solana-zk-sdk = "6.0.1"
+solana-system-program = "3.1.6"
+solana-system-interface = { version = "3.0.0", features = ["bincode"] }
 
-# SPL dependencies
-spl-token-2022 = "10.0.0"
-spl-token-2022-interface = "2.1.0"
+# SPL Token-2022. proof-extraction stays at 0.5.1 (matches spl-token-2022's
+# transitive) so we can name the legacy `ProofLocation` type at the boundary.
+# proof-generation jumps to 0.6.0 (zk-sdk 6.0.1) for the actual proof bytes.
+spl-token-2022 = { version = "10.0.0", features = ["zk-ops"] }
 spl-token-client = "0.18.0"
 spl-associated-token-account = "8.0.0"
-spl-token-confidential-transfer-proof-generation = "0.5.1"
 spl-token-confidential-transfer-proof-extraction = "0.5.1"
+spl-token-confidential-transfer-proof-generation = "0.6.0"
 
-# Other dependencies
-tokio = { version = "1.42.0", features = ["full"] }
-serde = "1.0.215"
-serde_json = "1.0.1"
-bs58 = "0.5.1"
-dotenvy = "0.15.7"
-google-cloud-kms = "0.6.0"
-base64 = "0.22.1"
-jito-sdk-rust = "0.1.0"
+# Bypass-mode helpers
+solana-zk-elgamal-proof-interface = "0.1.2"
+solana-zk-sdk-pod = "0.1.1"
+solana-address = "2.6"
+bytemuck = "1.25"
+# Record program: stages the oversized range proof off-tx so the verify ix
+# fits, via encode_verify_proof_from_account.
+spl-record = { version = "0.4.0", features = ["no-entrypoint"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Commitment config
+solana-commitment-config = "3.1.0"
+
+# Demo server
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+bs58 = "0.5"
+serde = { version = "1", features = ["derive"] }
+
+# Utilities
+hex = "0.4"
+serde_json = "1.0"
+
+[dev-dependencies]
+# solana-test-validator = "=4.0.0-rc.0"
+env_logger = "0.11"
+serde_json = "1.0"
+solana-commitment-config = "3.1.0"
