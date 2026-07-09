@@ -1,3 +1,5 @@
-/test-ledger
-/target
+target/
+test-ledger/
 .env
+.env.local
+.env*.local
