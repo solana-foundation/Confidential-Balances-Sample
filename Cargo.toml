@@ -8,40 +8,57 @@ name = "demo-server"
 path = "src/bin/demo-server.rs"
 
 [dependencies]
-# Solana Core. zk-sdk is at 6.0.1 because the deployed devnet ZK ElGamal Proof
-# program now expects 6.0.1-format proofs. spl-token-2022 = 10.0.0 still
-# transitively pulls zk-sdk 4.0 for its own API surface, so we sidestep the
-# boundary using `ProofLocation::ContextStateAccount` (a phantom-typed Pubkey
-# that doesn't carry proof bytes) and pre-verify proofs ourselves.
-solana-sdk = "3.0.0"
-solana-client = "3.1.6"
+# Solana core via granular crates, no solana-sdk umbrella. The whole graph is
+# on solana-zk-sdk 6.0.1 (spl-token-2022 11.0.0 targets it natively, so there's
+# no 4.0 to 6.0.1 split and no byte-casting).
+#
+# solana-client is the 4.0.0-rc.0 line: its rpc-client is built on the 3.x
+# transaction/message types, so we pin solana-transaction to 3.1 to match it.
+# Everything resolves to solana-pubkey 4.2 (= solana_address::Address), so
+# Pubkey == Address and no conversions are needed. Using the umbrella solana-sdk
+# 4.x instead would drag in transaction 4.x (mismatch with the rc rpc-client)
+# and the wincode skew, hence the granular crates.
+solana-client = "4.0.0-rc.0"
+solana-pubkey = "4.2"
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-signature = "3.0"
+solana-transaction = "3.1"
+solana-instruction = "3.4"
+solana-native-token = "3.0"
 solana-zk-sdk = "6.0.1"
-solana-system-program = "3.1.6"
-solana-system-interface = { version = "3.0.0", features = ["bincode"] }
+solana-system-interface = { version = "3.2.0", features = ["bincode"] }
 
-# SPL Token-2022. proof-extraction stays at 0.5.1 (matches spl-token-2022's
-# transitive) so we can name the legacy `ProofLocation` type at the boundary.
-# proof-generation jumps to 0.6.0 (zk-sdk 6.0.1) for the actual proof bytes.
-spl-token-2022 = { version = "10.0.0", features = ["zk-ops"] }
-spl-token-client = "0.18.0"
+# SPL Token-2022 (agave v4 aligned). token-2022 11.0.0 builds on zk-sdk 6.0.1
+# and proof-{extraction,generation} 0.6.0 directly.
+spl-token-2022 = { version = "11.0.0", features = ["zk-ops"] }
 spl-associated-token-account = "8.0.0"
-spl-token-confidential-transfer-proof-extraction = "0.5.1"
+spl-token-confidential-transfer-proof-extraction = "0.6.0"
 spl-token-confidential-transfer-proof-generation = "0.6.0"
 
-# Bypass-mode helpers
+# ZK ElGamal proof-program helpers (create/verify/close context state accounts).
 solana-zk-elgamal-proof-interface = "0.1.2"
-solana-zk-sdk-pod = "0.1.1"
+solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
-bytemuck = "1.25"
-# Record program: stages the oversized range proof off-tx so the verify ix
-# fits, via encode_verify_proof_from_account.
+
+# Transfer-with-fee: the U256 range proof verify ix exceeds the 1232-byte tx
+# limit, so its bytes are staged into an spl-record account (bytemuck to view
+# the proof data as bytes) and verified from there.
 spl-record = { version = "0.4.0", features = ["no-entrypoint"] }
+bytemuck = "1.25"
+
+# Batched transfers (option 1): pack N transfer ixs into one v0 transaction
+# whose account list is compressed by an Address Lookup Table, plus a compute
+# budget bump so the batch clears the per-tx CU ceiling.
+solana-address-lookup-table-interface = { version = "3.1.0", features = ["bincode"] }
+solana-compute-budget-interface = "3.0.0"
+solana-message = "3.1"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
 # Commitment config
-solana-commitment-config = "3.1.0"
+solana-commitment-config = "3.1.1"
 
 # Demo server
 axum = "0.7"
@@ -65,4 +82,4 @@ serde_json = "1.0"
 # solana-test-validator = "=4.0.0-rc.0"
 env_logger = "0.11"
 serde_json = "1.0"
-solana-commitment-config = "3.1.0"
+solana-commitment-config = "3.1.1"

@@ -2,23 +2,22 @@
 
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
-use solana_sdk::{
-    native_token::LAMPORTS_PER_SOL,
-    signature::{Keypair, Signer},
-    transaction::Transaction,
-};
+use solana_native_token::LAMPORTS_PER_SOL;
+use solana_keypair::Keypair;
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use solana_system_interface::instruction as system_instruction;
 use spl_associated_token_account::{
     get_associated_token_address_with_program_id,
     instruction::create_associated_token_account,
 };
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
 use spl_token_2022::{
     extension::{
         confidential_transfer::instruction::initialize_mint,
         ExtensionType,
     },
     instruction::initialize_mint as initialize_mint_base,
-    solana_zk_sdk::encryption::elgamal::ElGamalKeypair,
     state::Mint,
 };
 use std::env;
@@ -80,7 +79,7 @@ impl TestEnv {
     }
 
     /// Request airdrop if on local test validator, or transfer from payer on custom cluster
-    pub fn airdrop_if_needed(&self, pubkey: &solana_sdk::pubkey::Pubkey, lamports: u64) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn airdrop_if_needed(&self, pubkey: &solana_pubkey::Pubkey, lamports: u64) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_local {
             // Skip if trying to fund the payer itself (it's already funded)
             if pubkey == &self.payer.pubkey() {
@@ -140,7 +139,7 @@ impl TestEnv {
     }
 
     /// Get payer's public key
-    pub fn payer_pubkey(&self) -> solana_sdk::pubkey::Pubkey {
+    pub fn payer_pubkey(&self) -> solana_pubkey::Pubkey {
         self.payer.pubkey()
     }
 }
@@ -179,8 +178,7 @@ pub fn create_confidential_mint(
     );
 
     // Initialize confidential transfer extension
-    // Convert ElGamalPubkey to PodElGamalPubkey
-    let auditor_pubkey_pod: spl_token_2022::solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey =
+    let auditor_pubkey_pod: solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey =
         (*auditor_elgamal.pubkey()).into();
 
     let init_ct_ix = initialize_mint(
@@ -218,9 +216,9 @@ pub fn create_confidential_mint(
 /// Create an associated token account
 pub fn create_token_account(
     env: &TestEnv,
-    mint: &solana_sdk::pubkey::Pubkey,
-    owner: &solana_sdk::pubkey::Pubkey,
-) -> Result<solana_sdk::pubkey::Pubkey, Box<dyn std::error::Error>> {
+    mint: &solana_pubkey::Pubkey,
+    owner: &solana_pubkey::Pubkey,
+) -> Result<solana_pubkey::Pubkey, Box<dyn std::error::Error>> {
     let token_account = get_associated_token_address_with_program_id(
         owner,
         mint,
@@ -253,8 +251,8 @@ pub fn create_token_account(
 /// Mint tokens to an account
 pub fn mint_tokens(
     env: &TestEnv,
-    mint: &solana_sdk::pubkey::Pubkey,
-    destination: &solana_sdk::pubkey::Pubkey,
+    mint: &solana_pubkey::Pubkey,
+    destination: &solana_pubkey::Pubkey,
     authority: &Keypair,
     amount: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {

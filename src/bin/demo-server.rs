@@ -38,11 +38,11 @@ use tokio_stream::wrappers::BroadcastStream;
 use serde::{Deserialize, Serialize};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{Keypair, Signature, Signer},
-    transaction::Transaction,
-};
+use solana_pubkey::Pubkey;
+use solana_keypair::Keypair;
+use solana_signature::Signature;
+use solana_signer::Signer;
+use solana_transaction::Transaction;
 use solana_system_interface::instruction as system_instruction;
 use spl_associated_token_account::{
     get_associated_token_address_with_program_id,
@@ -57,16 +57,13 @@ use spl_token_2022::{
         BaseStateWithExtensions, ExtensionType, StateWithExtensions,
     },
     instruction::{initialize_mint as initialize_mint_base, mint_to},
-    solana_zk_sdk::encryption::pod::elgamal::PodElGamalPubkey as PodElGamalPubkeyLegacy,
     state::{Account as TokenAccount, Mint},
 };
 use solana_zk_sdk::encryption::{
     auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
-use solana_zk_sdk_pod::encryption::elgamal::{
-    PodElGamalCiphertext as PodElGamalCiphertextV6, PodElGamalPubkey as PodElGamalPubkeyV6,
-};
+use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
@@ -514,7 +511,10 @@ async fn transfer_handler(
             }
         };
 
-        if let Some(transfer_sig) = sigs.get(3) {
+        // The 3-tx flow puts the actual `inner_transfer` ix in the last tx
+        // (alongside eq_verify + 3 closes), so the transfer signature is the
+        // last one we got back from `transfer_confidential_with_progress`.
+        if let Some(transfer_sig) = sigs.last() {
             log_event(&s, "transfer", amount_ui, transfer_sig).await;
         }
 
@@ -649,11 +649,8 @@ fn verify_mint_matches(s: &AppState) -> Result<()> {
         .get_extension::<ConfidentialTransferMint>()
         .map_err(|e| anyhow!("mint missing ConfidentialTransferMint extension: {e}"))?;
 
-    let expected_v6: PodElGamalPubkeyV6 = (*s.auditor_elgamal.pubkey()).into();
-    // Wire format for the on-chain account is the 4.0 PodElGamalPubkey, but
-    // the bytes are identical; cast through.
-    let expected = PodElGamalPubkeyLegacy::from(expected_v6.0);
-    let actual: Option<PodElGamalPubkeyLegacy> = Option::from(ct.auditor_elgamal_pubkey);
+    let expected: PodElGamalPubkey = (*s.auditor_elgamal.pubkey()).into();
+    let actual: Option<PodElGamalPubkey> = Option::from(ct.auditor_elgamal_pubkey);
     match actual {
         Some(actual) if actual == expected => Ok(()),
         Some(_) => Err(anyhow!(
@@ -671,9 +668,7 @@ async fn create_confidential_mint(s: &AppState) -> Result<Signature> {
         ExtensionType::ConfidentialTransferMint,
     ])?;
     let rent = s.rpc.get_minimum_balance_for_rent_exemption(space)?;
-    // 6.0.1 → 4.0 PodElGamalPubkey via bytes (identical wire format).
-    let auditor_pod_v6: PodElGamalPubkeyV6 = (*s.auditor_elgamal.pubkey()).into();
-    let auditor_pod = PodElGamalPubkeyLegacy::from(auditor_pod_v6.0);
+    let auditor_pod: PodElGamalPubkey = (*s.auditor_elgamal.pubkey()).into();
 
     let create_ix = system_instruction::create_account(
         &s.keys.payer.pubkey(),
@@ -879,30 +874,16 @@ fn read_account_view(s: &AppState, owner: &Keypair) -> Result<AccountView> {
             let aes = AeKey::new_from_signer(owner, &token_account.to_bytes())
                 .map_err(|e| anyhow!("derive AES key: {e}"))?;
 
-            // 4.0 POD ciphertexts on chain → 6.0.1 PODs via byte cast → 6.0.1
-            // ElGamalCiphertext / AeCiphertext for the actual decryption.
-            let pending_lo_pod = PodElGamalCiphertextV6(
-                bytemuck::bytes_of(&ext.pending_balance_lo)
-                    .try_into()
-                    .map_err(|_| anyhow!("pending_balance_lo size"))?,
-            );
-            let pending_hi_pod = PodElGamalCiphertextV6(
-                bytemuck::bytes_of(&ext.pending_balance_hi)
-                    .try_into()
-                    .map_err(|_| anyhow!("pending_balance_hi size"))?,
-            );
-            let avail_pod = PodElGamalCiphertextV6(
-                bytemuck::bytes_of(&ext.available_balance)
-                    .try_into()
-                    .map_err(|_| anyhow!("available_balance size"))?,
-            );
-            let pending_lo: ElGamalCiphertext = pending_lo_pod
+            let pending_lo: ElGamalCiphertext = ext
+                .pending_balance_lo
                 .try_into()
                 .map_err(|e| anyhow!("decode pending_lo: {e:?}"))?;
-            let pending_hi: ElGamalCiphertext = pending_hi_pod
+            let pending_hi: ElGamalCiphertext = ext
+                .pending_balance_hi
                 .try_into()
                 .map_err(|e| anyhow!("decode pending_hi: {e:?}"))?;
-            let avail_ct: ElGamalCiphertext = avail_pod
+            let avail_ct: ElGamalCiphertext = ext
+                .available_balance
                 .try_into()
                 .map_err(|e| anyhow!("decode available_balance: {e:?}"))?;
 
@@ -910,11 +891,10 @@ fn read_account_view(s: &AppState, owner: &Keypair) -> Result<AccountView> {
             let pending_hi_v = pending_hi.decrypt_u32(elgamal.secret()).unwrap_or(0) as u64;
             let pending_total = pending_lo_v + (pending_hi_v << 16);
 
-            let avail_aes_bytes: [u8; 36] = bytemuck::bytes_of(&ext.decryptable_available_balance)
+            let avail_aes: AeCiphertext = ext
+                .decryptable_available_balance
                 .try_into()
-                .map_err(|_| anyhow!("decryptable_available_balance size"))?;
-            let avail_aes = AeCiphertext::from_bytes(&avail_aes_bytes)
-                .ok_or_else(|| anyhow!("decode AeCiphertext"))?;
+                .map_err(|e| anyhow!("decode AeCiphertext: {e:?}"))?;
             let avail_v = aes.decrypt(&avail_aes).unwrap_or(0);
 
             (

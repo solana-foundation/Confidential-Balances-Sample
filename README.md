@@ -82,52 +82,57 @@ Confidential transfers require zero-knowledge proofs verified by a dedicated Sol
 ### Rust Crates
 
 ```toml
-# Solana core. zk-sdk is at 6.0.1 because the deployed devnet ZK ElGamal Proof
-# program now expects 6.0.1-format proofs.
-solana-sdk = "3.0.0"
-solana-client = "3.1.6"
+# Solana core via granular crates (no solana-sdk umbrella). The whole graph is
+# on solana-zk-sdk 6.0.1: spl-token-2022 11.0.0 targets it natively, so there is
+# no version boundary to cross and no byte-casting.
+solana-client = "4.0.0-rc.0"
+solana-pubkey = "4.2"        # = solana_address::Address (provides the pubkey! macro)
+solana-keypair = "3.1"
+solana-signer = "3.0"
+solana-signature = "3.0"
+solana-transaction = "3.1"   # matches the rc rpc-client (3.x transaction types)
+solana-instruction = "3.4"
+solana-native-token = "3.0"
 solana-zk-sdk = "6.0.1"
+solana-system-interface = "3.2.0"
 
-# SPL Token-2022. proof-extraction stays at 0.5.1 (matches spl-token-2022's
-# transitive zk-sdk 4.0) so we can name the legacy `ProofLocation` type at the
-# instruction boundary. proof-generation is on 0.6.0 (zk-sdk 6.0.1) for the
-# actual proof bytes.
-spl-token-2022 = "10.0.0"
-spl-token-client = "0.18.0"
+# SPL Token-2022 (agave v4 aligned), all on zk-sdk 6.0.1.
+spl-token-2022 = "11.0.0"
 spl-associated-token-account = "8.0.0"
 spl-token-confidential-transfer-proof-generation = "0.6.0"
-spl-token-confidential-transfer-proof-extraction = "0.5.1"
+spl-token-confidential-transfer-proof-extraction = "0.6.0"
 
-# Bypass-mode helpers (see "Bypass mode" below)
+# ZK ElGamal proof-program helpers (create/verify/close context state accounts).
 solana-zk-elgamal-proof-interface = "0.1.2"
-solana-zk-sdk-pod = "0.1.1"
+solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
-bytemuck = "1.25"
 ```
 
-### Bypass mode (the 4.0 ↔ 6.0.1 boundary)
+> **Version note: this uses granular Solana crates on the `4.0.0-rc.0` line, not
+> the `solana-sdk` umbrella.** `spl-token-2022 = 11.0.0` requires
+> `solana-system-interface 3.2`, which needs `solana-instruction >= 3.4`. The only
+> stable `solana-client` (4.0.0) caps `solana-instruction < 3.4`, so it can't
+> coexist with token-2022 11. The `4.0.0-rc.0` client lifts that cap, but its
+> rpc-client is built on the 3.x `solana-transaction`/`solana-message` types, so
+> we pin `solana-transaction = "3.1"` and pull the rest as granular crates rather
+> than the `solana-sdk` 4.x umbrella (which would force `transaction 4.x` and a
+> `wincode` version skew). Everything resolves to `solana-pubkey 4.2`, which is
+> `Address as Pubkey`, so `Pubkey == Address` and no conversions are needed.
+> These rc/3.x pins can collapse back to a plain `solana-sdk` once a stable
+> `solana-client` ships that allows `solana-instruction 3.4`.
 
-This split is a **stopgap, not a design choice**. `spl-token-client` and
-`spl-token-2022` should be on the agave v4 beta / rc crates (which target
-`solana-zk-sdk = 6.0.1` natively), but those Agave v4 crates haven't been
-published yet. Until they are, `spl-token-2022 = 10.0.0` transitively pulls
-`solana-zk-sdk = 4.0` for its public API while the deployed ZK ElGamal Proof
-program on devnet verifies 6.0.1-format proofs. This repo bridges the gap:
+Confidential transfers run entirely on `solana-zk-sdk 6.0.1`: keys and proofs
+are generated with 6.0.1, pre-verified into `ProofContextState` accounts, and
+referenced from spl-token-2022's instruction builders via
+`ProofLocation::ContextStateAccount`. token-2022 11's account fields and
+builders speak the `solana-zk-sdk-pod` POD types directly, so no version
+bridging is needed.
 
-1. Derive ElGamal + AES keys with `solana-zk-sdk = 6.0.1` directly.
-2. Generate proofs with `proof-generation = 0.6.0`.
-3. Pre-verify each proof into a `ProofContextState` account.
-4. Reference those accounts in spl-token-2022's instruction builders via
-   `ProofLocation::ContextStateAccount` — a phantom-typed `Pubkey` that
-   carries no proof bytes, so the version mismatch never crosses the FFI.
-5. Cross the type boundary only at on-chain PODs (ElGamal pubkey/ciphertext,
-   AES ciphertext) using zero-copy byte casts, since their wire format is
-   identical between 4.0 and 6.0.1.
-
-Every module in `src/` follows this pattern; `*Legacy` aliases mark the
-4.0 side of the boundary. Once the v4 crates are published, the bypass and
-the `*Legacy` aliases can be deleted and everything routes through 6.0.1
-directly.
+(A residual `solana-zk-sdk 4.0` still appears in `Cargo.lock` as transitive
+baggage from `spl-pod` and the older `spl-token-2022-interface 2.1.0` pulled by
+`spl-associated-token-account` / `solana-account-decoder`. It is off the
+confidential-transfer path and harmless; it clears once those crates move to
+`spl-token-2022-interface 3.0.0` / zk-sdk 6.0.1 upstream.)
 
 ## Quick Start
 
@@ -161,6 +166,21 @@ SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
 MINT_ADDRESS=<mint> \
 OWNER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example get_balances
+
+# Batched transfers from one sender, all legs in a single atomic v0 tx (option 1)
+SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
+cargo run --example batch_transfer_atomic
+
+# Batched transfers from one sender, one confirmed tx per leg (option 2)
+SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
+cargo run --example batch_transfer_pipelined
+
+# Confidential transfer on a mint with transfer fees + permanent delegate
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
+cargo run --example run_transfer_with_fees
 ```
 
 **Available Operations:**
@@ -169,10 +189,36 @@ cargo run --example get_balances
 - `src/apply_pending.rs` - Apply pending balance to available balance
 - `src/withdraw.rs` - Withdraw from confidential to public balance
 - `src/transfer.rs` - Transfer confidentially between accounts (with proof context state accounts)
+- `src/transfer_with_fee.rs` - Transfer on a mint with confidential transfer fees (5 proofs, record-staged U256 range proof)
+- `src/batch_transfer.rs` - Batch multiple transfers from one sender (atomic v0+ALT, or pipelined)
 
 **Examples:**
 - `examples/run_transfer.rs` - Complete end-to-end transfer with balance display at each step
 - `examples/get_balances.rs` - Query and decrypt all balance types (public, pending, available)
+- `examples/batch_transfer_atomic.rs` - N transfers from one sender in a single atomic transaction
+- `examples/batch_transfer_pipelined.rs` - N transfers from one sender, one confirmed tx per leg
+- `examples/run_transfer_with_fees.rs` - Fee-enabled mint: confidential transfer with fee, fee decryption + harvest, permanent-delegate burn
+
+**Batching from one sender.** Spending is a read-modify-write against the sender's opaque
+available-balance ciphertext, so transfers from one account are inherently ordered: each leg's
+equality proof binds to the ciphertext the previous leg leaves behind. `batch_transfer` exploits
+the fact that the sender holds the secret to compute the whole chain of intermediate ciphertexts
+*offline* (ElGamal subtracts homomorphically; each proof exposes the next available-balance
+ciphertext), generating every proof up front. `batch_transfer_atomic` then pre-verifies all proofs
+into context state accounts and lands every `Transfer` in one v0 transaction (an Address Lookup
+Table compresses the account list, a compute-budget bump clears the CU ceiling); in-order execution
+makes the chained proofs validate deterministically. `batch_transfer_pipelined` submits one confirmed
+transaction per leg instead, trading latency for unbounded fan-out past the single-tx size/CU limit.
+
+**Transfers with fees.** A mint carrying `TransferFeeConfig` + `ConfidentialTransferFeeConfig`
+withholds a fee on every confidential transfer, encrypted on the recipient account under the
+mint's withdraw-withheld authority ElGamal key. The fee-aware transfer needs five proofs instead
+of three (equality, transfer-amount validity, percentage-with-cap, fee validity, and a U256 range
+proof). The U256 range proof's verify instruction alone exceeds the 1232-byte transaction limit,
+so `transfer_with_fee.rs` stages its bytes into an spl-record account across multiple writes and
+verifies from there. `run_transfer_with_fees` demonstrates the full loop — transfer, decrypting
+the withheld fee, harvesting it to the mint — plus a `PermanentDelegate` burning from the
+recipient's account without their signature.
 
 All operations are tested in `tests/integration_test.rs` with complete end-to-end flows.
 
