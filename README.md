@@ -176,6 +176,11 @@ cargo run --example batch_transfer_atomic
 SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
 PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example batch_transfer_pipelined
+
+# Confidential transfer on a mint with transfer fees + permanent delegate
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
+cargo run --example run_transfer_with_fees
 ```
 
 **Available Operations:**
@@ -184,6 +189,7 @@ cargo run --example batch_transfer_pipelined
 - `src/apply_pending.rs` - Apply pending balance to available balance
 - `src/withdraw.rs` - Withdraw from confidential to public balance
 - `src/transfer.rs` - Transfer confidentially between accounts (with proof context state accounts)
+- `src/transfer_with_fee.rs` - Transfer on a mint with confidential transfer fees (5 proofs, record-staged U256 range proof)
 - `src/batch_transfer.rs` - Batch multiple transfers from one sender (atomic v0+ALT, or pipelined)
 
 **Examples:**
@@ -191,6 +197,7 @@ cargo run --example batch_transfer_pipelined
 - `examples/get_balances.rs` - Query and decrypt all balance types (public, pending, available)
 - `examples/batch_transfer_atomic.rs` - N transfers from one sender in a single atomic transaction
 - `examples/batch_transfer_pipelined.rs` - N transfers from one sender, one confirmed tx per leg
+- `examples/run_transfer_with_fees.rs` - Fee-enabled mint: confidential transfer with fee, fee decryption + harvest, permanent-delegate burn
 
 **Batching from one sender.** Spending is a read-modify-write against the sender's opaque
 available-balance ciphertext, so transfers from one account are inherently ordered: each leg's
@@ -202,6 +209,16 @@ into context state accounts and lands every `Transfer` in one v0 transaction (an
 Table compresses the account list, a compute-budget bump clears the CU ceiling); in-order execution
 makes the chained proofs validate deterministically. `batch_transfer_pipelined` submits one confirmed
 transaction per leg instead, trading latency for unbounded fan-out past the single-tx size/CU limit.
+
+**Transfers with fees.** A mint carrying `TransferFeeConfig` + `ConfidentialTransferFeeConfig`
+withholds a fee on every confidential transfer, encrypted on the recipient account under the
+mint's withdraw-withheld authority ElGamal key. The fee-aware transfer needs five proofs instead
+of three (equality, transfer-amount validity, percentage-with-cap, fee validity, and a U256 range
+proof). The U256 range proof's verify instruction alone exceeds the 1232-byte transaction limit,
+so `transfer_with_fee.rs` stages its bytes into an spl-record account across multiple writes and
+verifies from there. `run_transfer_with_fees` demonstrates the full loop — transfer, decrypting
+the withheld fee, harvesting it to the mint — plus a `PermanentDelegate` burning from the
+recipient's account without their signature.
 
 All operations are tested in `tests/integration_test.rs` with complete end-to-end flows.
 

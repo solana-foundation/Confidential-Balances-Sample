@@ -43,6 +43,19 @@ pub async fn configure_account_for_confidential_transfers(
     authority: &dyn Signer,
     mint: &Pubkey,
 ) -> SigResult {
+    configure_account_with_extensions(client, payer, authority, mint, &[]).await
+}
+
+/// Like [`configure_account_for_confidential_transfers`], but reallocates the
+/// token account for `extra_extensions` too. A mint with confidential fees
+/// needs its accounts to carry `ExtensionType::ConfidentialTransferFeeAmount`.
+pub async fn configure_account_with_extensions(
+    client: &RpcClient,
+    payer: &dyn Signer,
+    authority: &dyn Signer,
+    mint: &Pubkey,
+    extra_extensions: &[ExtensionType],
+) -> SigResult {
     let token_account = get_associated_token_address_with_program_id(
         &authority.pubkey(),
         mint,
@@ -66,13 +79,15 @@ pub async fn configure_account_for_confidential_transfers(
     let context_state_size = size_of::<ProofContextState<PubkeyValidityProofContext>>();
     let context_state_rent = client.get_minimum_balance_for_rent_exemption(context_state_size)?;
 
+    let mut extensions = vec![ExtensionType::ConfidentialTransferAccount];
+    extensions.extend_from_slice(extra_extensions);
     let realloc_ix = reallocate(
         &spl_token_2022::id(),
         &token_account,
         &payer.pubkey(),
         &authority.pubkey(),
         &[&authority.pubkey()],
-        &[ExtensionType::ConfidentialTransferAccount],
+        &extensions,
     )?;
 
     let create_proof_account_ix = system_instruction::create_account(

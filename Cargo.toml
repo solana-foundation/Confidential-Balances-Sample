@@ -41,6 +41,12 @@ solana-zk-elgamal-proof-interface = "0.1.2"
 solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
 
+# Transfer-with-fee: the U256 range proof verify ix exceeds the 1232-byte tx
+# limit, so its bytes are staged into an spl-record account (bytemuck to view
+# the proof data as bytes) and verified from there.
+spl-record = { version = "0.4.0", features = ["no-entrypoint"] }
+bytemuck = "1.25"
+
 # Batched transfers (option 1): pack N transfer ixs into one v0 transaction
 # whose account list is compressed by an Address Lookup Table, plus a compute
 # budget bump so the batch clears the per-tx CU ceiling.

@@ -619,6 +619,7 @@ dependencies = [
  "anyhow",
  "axum",
  "bs58",
+ "bytemuck",
  "chrono",
  "dotenvy",
  "env_logger",
@@ -644,6 +645,7 @@ dependencies = [
  "solana-zk-sdk 6.0.1",
  "solana-zk-sdk-pod",
  "spl-associated-token-account",
+ "spl-record",
  "spl-token-2022",
  "spl-token-confidential-transfer-proof-extraction 0.6.1",
  "spl-token-confidential-transfer-proof-generation 0.6.0",
@@ -4634,6 +4636,27 @@ dependencies = [
  "quote",
  "sha2",
  "syn",
+]
+
+[[package]]
+name = "spl-record"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fda0eb42ca6387770d7f0e764ecd8fa863f4529e9ff35fbf146576b5f4372587"
+dependencies = [
+ "bytemuck",
+ "num-derive",
+ "num-traits",
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-program-pack",
+ "solana-pubkey 3.0.0",
+ "solana-rent 3.1.0",
+ "solana-security-txt",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
