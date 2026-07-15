@@ -38,9 +38,6 @@ use spl_token_2022::{
 use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
 use std::mem::size_of;
 
-const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
-
 pub async fn configure_account_for_confidential_transfers(
     client: &RpcClient,
     payer: &dyn Signer,

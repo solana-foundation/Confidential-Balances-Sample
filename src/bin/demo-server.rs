@@ -514,7 +514,9 @@ async fn transfer_handler(
             }
         };
 
-        if let Some(transfer_sig) = sigs.get(3) {
+        // The U128 range proof stages into two spl-record write txs, so the
+        // transfer (with its bundled closes) is the last signature, not index 3.
+        if let Some(transfer_sig) = sigs.last() {
             log_event(&s, "transfer", amount_ui, transfer_sig).await;
         }
 
@@ -834,8 +836,7 @@ async fn read_ledger_state(s: &AppState) -> Result<LedgerState> {
         receiver,
         auditor: AuditorView {
             authority: s.keys.auditor_authority.pubkey().to_string(),
-            elgamal_pubkey: bs58::encode(s.auditor_elgamal.pubkey().to_string().as_bytes())
-                .into_string(),
+            elgamal_pubkey: s.auditor_elgamal.pubkey().to_string(),
             recent_events: events,
         },
     })

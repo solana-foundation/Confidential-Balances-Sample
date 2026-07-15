@@ -56,9 +56,6 @@ use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation
 use spl_token_confidential_transfer_proof_generation::transfer::transfer_split_proof_data;
 use std::mem::size_of;
 
-const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
-
 /// Byte offset of the proof data inside an spl-record account
 /// (`RecordData::WRITABLE_START_INDEX`: 1-byte version + 32-byte authority).
 const RECORD_PROOF_OFFSET: u32 = 33;

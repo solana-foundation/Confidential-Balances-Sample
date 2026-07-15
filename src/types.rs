@@ -1,7 +1,12 @@
 //! Common types for confidential transfer operations
 
+use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use std::error::Error;
+
+/// The native ZK ElGamal Proof program that verifies confidential-transfer proofs.
+pub const ZK_PROOF_PROGRAM_ID: Pubkey =
+    solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 /// Result type for confidential transfer operations
 pub type CtResult<T> = Result<T, Box<dyn Error>>;
