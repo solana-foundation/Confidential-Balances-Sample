@@ -21,7 +21,7 @@ use solana_zk_elgamal_proof_interface::{
     state::ProofContextState,
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::AeKey,
+    auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
@@ -42,9 +42,6 @@ use spl_token_2022::{
 use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
 use spl_token_confidential_transfer_proof_generation::withdraw::withdraw_proof_data;
 use std::mem::size_of;
-
-const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_sdk::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
 
 pub async fn withdraw_from_confidential(
     client: &RpcClient,
@@ -77,9 +74,17 @@ pub async fn withdraw_from_confidential(
         .try_into()
         .map_err(|e| format!("decode available_balance: {e:?}"))?;
 
-    let current_available = available_balance
-        .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt available balance")? as u64;
+    // Read the plaintext balance from the AES-encrypted decryptable balance.
+    // ElGamal's decrypt_u32 only recovers values up to 2^32 raw units, so it
+    // fails for realistic balances; the AES field has no such limit.
+    let decryptable_bytes: [u8; 36] =
+        bytemuck::bytes_of(&ct_extension.decryptable_available_balance)
+            .try_into()
+            .map_err(|_| "decryptable_available_balance size")?;
+    let current_available = AeCiphertext::from_bytes(&decryptable_bytes)
+        .ok_or("decode decryptable_available_balance")?
+        .decrypt(&aes_key)
+        .ok_or("decrypt available balance")?;
 
     if current_available < amount {
         return Err(format!(

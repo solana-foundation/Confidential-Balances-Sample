@@ -8,7 +8,10 @@
 use crate::types::*;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{signature::Signer, transaction::Transaction};
-use solana_zk_sdk::encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair};
+use solana_zk_sdk::encryption::{
+    auth_encryption::{AeCiphertext, AeKey},
+    elgamal::ElGamalKeypair,
+};
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
@@ -43,7 +46,8 @@ pub async fn apply_pending_balance(
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
-    // Byte-cast 4.0 PodElGamalCiphertext → 6.0.1 → ElGamalCiphertext.
+    // Byte-cast the 4.0 pending-balance ciphertexts to 6.0.1 and decrypt with
+    // the ElGamal key. Pending lo/hi are bounded, so decrypt_u32 is fine here.
     let pending_lo_v6: PodElGamalCiphertextV6 = PodElGamalCiphertextV6(
         bytemuck::bytes_of(&ct_extension.pending_balance_lo)
             .try_into()
@@ -54,35 +58,35 @@ pub async fn apply_pending_balance(
             .try_into()
             .map_err(|_| "pending_balance_hi size")?,
     );
-    let available_v6: PodElGamalCiphertextV6 = PodElGamalCiphertextV6(
-        bytemuck::bytes_of(&ct_extension.available_balance)
-            .try_into()
-            .map_err(|_| "available_balance size")?,
-    );
-
     let pending_lo: solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
         pending_lo_v6.try_into().map_err(|e| format!("{e:?}"))?;
     let pending_hi: solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
         pending_hi_v6.try_into().map_err(|e| format!("{e:?}"))?;
-    let available_balance: solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        available_v6.try_into().map_err(|e| format!("{e:?}"))?;
-
     let pending_lo_amount = pending_lo
         .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt pending_balance_lo")?;
+        .ok_or("decrypt pending_balance_lo")? as u64;
     let pending_hi_amount = pending_hi
         .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt pending_balance_hi")?;
-    let current_available = available_balance
-        .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt available_balance")?;
+        .ok_or("decrypt pending_balance_hi")? as u64;
+
+    // Read the current available balance from the AES-encrypted decryptable
+    // balance. ElGamal's decrypt_u32 only recovers values up to 2^32 raw units,
+    // so it fails for realistic balances; the AES field has no such limit.
+    let decryptable_bytes: [u8; 36] =
+        bytemuck::bytes_of(&ct_extension.decryptable_available_balance)
+            .try_into()
+            .map_err(|_| "decryptable_available_balance size")?;
+    let current_available = AeCiphertext::from_bytes(&decryptable_bytes)
+        .ok_or("decode decryptable_available_balance")?
+        .decrypt(&aes_key)
+        .ok_or("decrypt available balance")?;
 
     let pending_total = pending_lo_amount + (pending_hi_amount << 16);
     let new_available = current_available + pending_total;
 
     // Encrypt new available with 6.0.1 AES, byte-cast to legacy PodAeCiphertext
     // for the spl-token-2022 instruction builder.
-    let new_decryptable_v6 = aes_key.encrypt(new_available as u64);
+    let new_decryptable_v6 = aes_key.encrypt(new_available);
     let new_decryptable_legacy: PodAeCiphertextLegacy =
         PodAeCiphertextLegacy::from(new_decryptable_v6.to_bytes());
 
