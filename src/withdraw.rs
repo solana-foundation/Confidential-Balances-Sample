@@ -95,10 +95,20 @@ pub async fn withdraw_from_confidential(
     let new_available = current_available - amount;
     let new_decryptable: PodAeCiphertext = aes_key.encrypt(new_available).into();
 
-    // ----- Pre-verify equality proof into a context state account -----
+    // ----- Pre-verify the proofs into context state accounts -----
+    // Same packing as the transfer flow: the creates + the small equality
+    // verify share one tx, and the range verify gets its own tx (the verify
+    // ix carries the whole proof, so pairing it with anything else overflows
+    // the 1232-byte tx size limit). Payer is the context-state authority so
+    // the verify txs don't carry the token authority's key.
     let equality_account = Keypair::new();
+    let range_account = Keypair::new();
+
     let equality_size = size_of::<ProofContextState<CiphertextCommitmentEqualityProofContext>>();
     let equality_rent = client.get_minimum_balance_for_rent_exemption(equality_size)?;
+    let range_size = size_of::<ProofContextState<BatchedRangeProofContext>>();
+    let range_rent = client.get_minimum_balance_for_rent_exemption(range_size)?;
+
     let equality_create_ix = system_instruction::create_account(
         &payer.pubkey(),
         &equality_account.pubkey(),
@@ -106,31 +116,6 @@ pub async fn withdraw_from_confidential(
         equality_size as u64,
         &ZK_PROOF_PROGRAM_ID,
     );
-    let equality_verify_ix = ProofInstruction::VerifyCiphertextCommitmentEquality
-        .encode_verify_proof(
-            Some(ContextStateInfo {
-                context_state_account: &Address::from(equality_account.pubkey().to_bytes()),
-                context_state_authority: &Address::from(authority.pubkey().to_bytes()),
-            }),
-            &proof_data.equality_proof_data,
-        );
-
-    let mut signatures: Vec<Signature> = Vec::new();
-    // Verify-with-context-state records the authority as a non-signer for
-    // the later close; only payer + the new proof account need to sign here.
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
-        &[equality_create_ix, equality_verify_ix],
-        Some(&payer.pubkey()),
-        &[payer, &equality_account],
-        blockhash,
-    );
-    signatures.push(client.send_and_confirm_transaction(&tx)?);
-
-    // ----- Pre-verify range proof into a context state account -----
-    let range_account = Keypair::new();
-    let range_size = size_of::<ProofContextState<BatchedRangeProofContext>>();
-    let range_rent = client.get_minimum_balance_for_rent_exemption(range_size)?;
     let range_create_ix = system_instruction::create_account(
         &payer.pubkey(),
         &range_account.pubkey(),
@@ -138,19 +123,42 @@ pub async fn withdraw_from_confidential(
         range_size as u64,
         &ZK_PROOF_PROGRAM_ID,
     );
+
+    let payer_addr: Address = payer.pubkey().to_bytes().into();
+    let equality_verify_ix = ProofInstruction::VerifyCiphertextCommitmentEquality
+        .encode_verify_proof(
+            Some(ContextStateInfo {
+                context_state_account: &Address::from(equality_account.pubkey().to_bytes()),
+                context_state_authority: &payer_addr,
+            }),
+            &proof_data.equality_proof_data,
+        );
     let range_verify_ix = ProofInstruction::VerifyBatchedRangeProofU64.encode_verify_proof(
         Some(ContextStateInfo {
             context_state_account: &Address::from(range_account.pubkey().to_bytes()),
-            context_state_authority: &Address::from(authority.pubkey().to_bytes()),
+            context_state_authority: &payer_addr,
         }),
         &proof_data.range_proof_data,
     );
 
+    let mut signatures: Vec<Signature> = Vec::new();
+
+    // Tx 1: create both proof accounts + verify the equality proof.
     let blockhash = client.get_latest_blockhash()?;
     let tx = Transaction::new_signed_with_payer(
-        &[range_create_ix, range_verify_ix],
+        &[equality_create_ix, range_create_ix, equality_verify_ix],
         Some(&payer.pubkey()),
-        &[payer, &range_account],
+        &[payer, &equality_account, &range_account],
+        blockhash,
+    );
+    signatures.push(client.send_and_confirm_transaction(&tx)?);
+
+    // Tx 2: verify the range proof on its own.
+    let blockhash = client.get_latest_blockhash()?;
+    let tx = Transaction::new_signed_with_payer(
+        &[range_verify_ix],
+        Some(&payer.pubkey()),
+        &[payer],
         blockhash,
     );
     signatures.push(client.send_and_confirm_transaction(&tx)?);
@@ -174,33 +182,35 @@ pub async fn withdraw_from_confidential(
         range_loc,
     )?;
 
+    // Tx 3: withdraw + close both proof accounts. Payer is the context-state
+    // authority on the closes; the token authority signs for the withdraw.
+    let close_eq = close_context_state(
+        ContextStateInfo {
+            context_state_account: &Address::from(equality_account.pubkey().to_bytes()),
+            context_state_authority: &payer_addr,
+        },
+        &payer_addr,
+    );
+    let close_range = close_context_state(
+        ContextStateInfo {
+            context_state_account: &Address::from(range_account.pubkey().to_bytes()),
+            context_state_authority: &payer_addr,
+        },
+        &payer_addr,
+    );
+    let mut ixs = withdraw_ixs;
+    ixs.push(close_eq);
+    ixs.push(close_range);
+
     let blockhash = client.get_latest_blockhash()?;
     let tx = Transaction::new_signed_with_payer(
-        &withdraw_ixs,
+        &ixs,
         Some(&payer.pubkey()),
         &[payer, authority],
         blockhash,
     );
-    signatures.push(client.send_and_confirm_transaction(&tx)?);
-
-    // ----- Close the two proof context state accounts -----
-    for account in [&equality_account, &range_account] {
-        let close_ix = close_context_state(
-            ContextStateInfo {
-                context_state_account: &Address::from(account.pubkey().to_bytes()),
-                context_state_authority: &Address::from(authority.pubkey().to_bytes()),
-            },
-            &Address::from(payer.pubkey().to_bytes()),
-        );
-        let blockhash = client.get_latest_blockhash()?;
-        let tx = Transaction::new_signed_with_payer(
-            &[close_ix],
-            Some(&payer.pubkey()),
-            &[payer, authority],
-            blockhash,
-        );
-        signatures.push(client.send_and_confirm_transaction(&tx)?);
-    }
+    let withdraw_sig = client.send_and_confirm_transaction(&tx)?;
+    signatures.push(withdraw_sig);
 
     println!(
         "✅ Withdrew {} tokens to public balance ({} txs). Remaining confidential: {}",
@@ -208,6 +218,5 @@ pub async fn withdraw_from_confidential(
         signatures.len(),
         new_available
     );
-    // Return the withdraw ix signature (index 2 in the sequence).
-    Ok(signatures[2])
+    Ok(withdraw_sig)
 }
