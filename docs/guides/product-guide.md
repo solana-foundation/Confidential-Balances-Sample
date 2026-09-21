@@ -146,12 +146,12 @@ solana-test-validator --quiet --reset &
 cargo test --test integration_test
 
 # Run end-to-end transfer example (shows balance changes throughout)
-SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
 PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example run_transfer
 
 # Query and display encrypted balances
-SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
 MINT_ADDRESS=<mint> \
 OWNER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example get_balances

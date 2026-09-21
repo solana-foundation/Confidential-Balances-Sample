@@ -1,9 +1,9 @@
 //! Deposit tokens into confidential balance
 
+use crate::send::{send_v1_tx, CU_LIMIT_DEFAULT};
 use crate::types::*;
 use solana_client::rpc_client::RpcClient;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::extension::confidential_transfer::instruction::deposit;
 
@@ -43,16 +43,13 @@ pub async fn deposit_to_confidential(
         &[&authority.pubkey()],
     )?;
 
-    // Send transaction
-    let recent_blockhash = client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
+    let signature = send_v1_tx(
+        client,
         &[deposit_ix],
-        Some(&payer.pubkey()),
+        &payer.pubkey(),
         &[payer, authority],
-        recent_blockhash,
-    );
-
-    let signature = client.send_and_confirm_transaction(&transaction)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     println!("✅ Deposited {} tokens to pending balance: {}", amount, signature);
 
     Ok(signature)

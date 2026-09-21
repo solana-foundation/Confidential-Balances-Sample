@@ -82,57 +82,54 @@ Confidential transfers require zero-knowledge proofs verified by a dedicated Sol
 ### Rust Crates
 
 ```toml
-# Solana core via granular crates (no solana-sdk umbrella). The whole graph is
-# on solana-zk-sdk 6.0.1: spl-token-2022 11.0.0 targets it natively, so there is
-# no version boundary to cross and no byte-casting.
-solana-client = "4.0.0-rc.0"
-solana-pubkey = "4.2"        # = solana_address::Address (provides the pubkey! macro)
+# Solana core via granular crates (no solana-sdk umbrella). solana-client 4.3
+# is the stable line that sends v1 transactions; solana-message 4.6 carries the
+# v1 module (TransactionConfig in the header, 4096-byte limit).
+solana-client = "4.3.0"
+solana-pubkey = "4.3"        # = solana_address::Address (provides the pubkey! macro)
 solana-keypair = "3.1"
 solana-signer = "3.0"
-solana-signature = "3.0"
-solana-transaction = "3.1"   # matches the rc rpc-client (3.x transaction types)
-solana-instruction = "3.4"
+solana-signature = "3.5"
+solana-transaction = { version = "4.3", features = ["wincode"] }
+solana-message = "4.6"
+solana-instruction = "3.5"
 solana-native-token = "3.0"
-solana-zk-sdk = "6.0.1"
+solana-zk-sdk = "7.0.1"
 solana-system-interface = "3.2.0"
 
-# SPL Token-2022 (agave v4 aligned), all on zk-sdk 6.0.1.
+# SPL Token-2022. Single transfers, withdraws, and configures carry their
+# proofs inline via ProofLocation::InstructionOffset.
 spl-token-2022 = "11.0.0"
 spl-associated-token-account = "8.0.0"
-spl-token-confidential-transfer-proof-generation = "0.6.0"
-spl-token-confidential-transfer-proof-extraction = "0.6.0"
+spl-token-confidential-transfer-proof-generation = "0.6.1"
+spl-token-confidential-transfer-proof-extraction = "0.6.1"
 
-# ZK ElGamal proof-program helpers (create/verify/close context state accounts).
+# ZK ElGamal proof-program helpers, still used by the batch and fee flows
+# (create/verify/close context state accounts).
 solana-zk-elgamal-proof-interface = "0.1.2"
 solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
 ```
 
-> **Version note: this uses granular Solana crates on the `4.0.0-rc.0` line, not
-> the `solana-sdk` umbrella.** `spl-token-2022 = 11.0.0` requires
-> `solana-system-interface 3.2`, which needs `solana-instruction >= 3.4`. The only
-> stable `solana-client` (4.0.0) caps `solana-instruction < 3.4`, so it can't
-> coexist with token-2022 11. The `4.0.0-rc.0` client lifts that cap, but its
-> rpc-client is built on the 3.x `solana-transaction`/`solana-message` types, so
-> we pin `solana-transaction = "3.1"` and pull the rest as granular crates rather
-> than the `solana-sdk` 4.x umbrella (which would force `transaction 4.x` and a
-> `wincode` version skew). Everything resolves to `solana-pubkey 4.2`, which is
-> `Address as Pubkey`, so `Pubkey == Address` and no conversions are needed.
-> These rc/3.x pins can collapse back to a plain `solana-sdk` once a stable
-> `solana-client` ships that allows `solana-instruction 3.4`.
+> **Version notes.** v1 transactions serialize with `wincode`, not `bincode`;
+> `VersionedTransaction::try_new` lives behind `solana-transaction`'s `wincode`
+> feature, and `solana-rpc-client 4.3` handles the encoding on send. Everything
+> resolves to one `solana-instruction 3.5.x` / `solana-address 2.7.x` stack, so
+> `Pubkey == Address` and no conversions are needed. Key derivation uses
+> zk-sdk 7's `new_from_signer_legacy`, which is byte-identical to the pre-7
+> `new_from_signer` — existing accounts stay decryptable.
 
-Confidential transfers run entirely on `solana-zk-sdk 6.0.1`: keys and proofs
-are generated with 6.0.1, pre-verified into `ProofContextState` accounts, and
-referenced from spl-token-2022's instruction builders via
-`ProofLocation::ContextStateAccount`. token-2022 11's account fields and
-builders speak the `solana-zk-sdk-pod` POD types directly, so no version
-bridging is needed.
-
-(A residual `solana-zk-sdk 4.0` still appears in `Cargo.lock` as transitive
-baggage from `spl-pod` and the older `spl-token-2022-interface 2.1.0` pulled by
-`spl-associated-token-account` / `solana-account-decoder`. It is off the
-confidential-transfer path and harmless; it clears once those crates move to
-`spl-token-2022-interface 3.0.0` / zk-sdk 6.0.1 upstream.)
+The single-transfer, withdraw, and configure flows go out in the **v1
+transaction format** (SIMD-0385), which raises the size limit from 1232 to
+4096 bytes. That is enough to carry the transfer's three ZK proofs inline as
+sibling instructions via `ProofLocation::InstructionOffset`, so those flows
+have no proof context state accounts to create, fund, or close. The compute
+budget rides in the v1 message header (`TransactionConfig`) — under v1 the
+runtime treats unset config bits as 0, so `src/send.rs` always sets the
+compute-unit and loaded-accounts-data-size limits explicitly. The batch and
+fee flows keep their existing strategies: batches compress the account list
+with an Address Lookup Table (v0-only), and the fee flow's U256 range proof
+is staged into an spl-record account.
 
 ## Quick Start
 
@@ -140,40 +137,41 @@ confidential-transfer path and harmless; it clears once those crates move to
 
 - Solana CLI 2.1.13+ (`solana --version`)
 - SPL Token CLI 5.1.0+ (`spl-token --version`)
-- Rust 1.70+
+- Rust 1.97.1+
+- A cluster running agave 4.1+ — v1 transactions need it. Devnet and mainnet
+  both qualify; an older local `solana-test-validator` does not.
 
 ### Running the Example Implementation
 
 This repository includes a complete Rust implementation of all confidential transfer operations:
 
 ```bash
-# Start local test validator
-solana-test-validator --quiet --reset &
-
-# Run all integration tests
+# Run all integration tests (against devnet — see note above)
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo test --test integration_test
 
 # Run a specific test
 cargo test test_confidential_transfer_between_accounts -- --nocapture
 
 # Run end-to-end transfer example (shows balance changes throughout)
-SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
 PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example run_transfer
 
 # Query and display encrypted balances
-SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
 MINT_ADDRESS=<mint> \
 OWNER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example get_balances
 
 # Batched transfers from one sender, all legs in a single atomic v0 tx (option 1)
-SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
 PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example batch_transfer_atomic
 
 # Batched transfers from one sender, one confirmed tx per leg (option 2)
-SOLANA_RPC_URL=https://zk-edge.surfnet.dev:8899 \
+SOLANA_RPC_URL=https://api.devnet.solana.com \
 PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo run --example batch_transfer_pipelined
 
@@ -188,7 +186,7 @@ cargo run --example run_transfer_with_fees
 - `src/deposit.rs` - Deposit from public to confidential balance
 - `src/apply_pending.rs` - Apply pending balance to available balance
 - `src/withdraw.rs` - Withdraw from confidential to public balance
-- `src/transfer.rs` - Transfer confidentially between accounts (with proof context state accounts)
+- `src/transfer.rs` - Transfer confidentially between accounts (one v1 tx, proofs inline)
 - `src/transfer_with_fee.rs` - Transfer on a mint with confidential transfer fees (5 proofs, record-staged U256 range proof)
 - `src/batch_transfer.rs` - Batch multiple transfers from one sender (atomic v0+ALT, or pipelined)
 
@@ -324,24 +322,21 @@ Each confidential token account has two encryption keys derived from the owner's
 | **Ciphertext Validity** | Proves ciphertexts are properly generated | Small |
 | **Range Proof** | Proves value is in range [0, u64::MAX] | Large |
 
-**Proof Context State Accounts**: To avoid transaction size limitations, each
-proof is pre-verified into a temporary on-chain account and the transfer
-instruction references it via `ProofLocation::ContextStateAccount`. The
-implementation in `src/transfer.rs` packs the full flow into **3
-transactions**:
+**Inline proofs, one transaction**: a confidential transfer is a single v1
+transaction. The three proofs travel as sibling `VerifyProof` instructions
+right after the transfer instruction, referenced via
+`ProofLocation::InstructionOffset` (offsets 1/2/3, enforced by the
+spl-token-2022 `transfer` builder). The whole transaction is ~2.5 KB of the
+4096-byte v1 budget and ~238k CU, mostly the range proof's 200k. Withdraw
+works the same way (equality + range-U64 inline, one transaction), and
+`configure_account` carries its pubkey-validity proof inline too. Signers are
+just the fee payer and the token-account authority — no throwaway proof
+account keypairs, no rent round-trips.
 
-1. **Tx 1**: create all three proof accounts (equality / validity / range)
-   and verify the **validity** proof.
-2. **Tx 2**: verify the **range** proof on its own — ~1006-byte ix, the
-   binding constraint on transaction size.
-3. **Tx 3**: verify the **equality** proof, run `inner_transfer`, and close
-   all three proof accounts to reclaim rent.
-
-The proof accounts use the **payer** (not the sender) as the context-state
-authority. This keeps the sender out of the verify txs' `account_keys`,
-saving 32 bytes per tx — the difference between fitting and overflowing the
-1232-byte legacy tx-size limit on the range-verify tx. The sender still
-signs Tx 3 because it's the transfer's token-account authority.
+**Proof context state accounts** remain the mechanism for flows whose proofs
+exceed even the v1 budget: the batch flow pre-verifies every leg's proofs into
+context state accounts so N transfers fit in one v0 transaction, and the fee
+flow stages its U256 range proof through an spl-record account.
 
 ## Resources
 

@@ -1,23 +1,14 @@
 //! Configure a token account for confidential transfers.
 //!
-//! Generates the PubkeyValidity proof with solana-zk-sdk 6.0.1, pre-verifies
-//! it into a context state account, and references that account in
-//! spl-token-2022 11.0.0's `configure_account` via
-//! `ProofLocation::ContextStateAccount`.
+//! Generates the PubkeyValidity proof and submits it inline with the
+//! `configure_account` instruction in one v1 transaction via
+//! `ProofLocation::InstructionOffset`.
 
+use crate::send::{send_v1_tx, CU_LIMIT_CONFIGURE};
 use crate::types::*;
-use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
 use solana_pubkey::Pubkey;
-use solana_keypair::Keypair;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
-use solana_system_interface::instruction as system_instruction;
-use solana_zk_elgamal_proof_interface::{
-    instruction::{ContextStateInfo, ProofInstruction},
-    proof_data::PubkeyValidityProofContext,
-    state::ProofContextState,
-};
 use solana_zk_sdk::{
     encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
     zk_elgamal_proof_program::pubkey_validity::build_pubkey_validity_proof_data,
@@ -25,17 +16,11 @@ use solana_zk_sdk::{
 use solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
-    extension::{
-        confidential_transfer::instruction::{configure_account, PubkeyValidityProofData},
-        ExtensionType,
-    },
+    extension::{confidential_transfer::instruction::configure_account, ExtensionType},
     instruction::reallocate,
 };
 use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
-use std::mem::size_of;
-
-const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_pubkey::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
+use std::num::NonZeroI8;
 
 pub async fn configure_account_for_confidential_transfers(
     client: &RpcClient,
@@ -62,10 +47,13 @@ pub async fn configure_account_with_extensions(
         &spl_token_2022::id(),
     );
 
-    // 6.0.1-derived encryption keys.
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(authority, &token_account.to_bytes())
-        .map_err(|e| format!("derive ElGamal keypair: {e}"))?;
-    let aes_key = AeKey::new_from_signer(authority, &token_account.to_bytes())
+    // *_legacy keeps the pre-zk-sdk-7 derivation; existing accounts depend on it.
+    #[allow(deprecated)]
+    let elgamal_keypair =
+        ElGamalKeypair::new_from_signer_legacy(authority, &token_account.to_bytes())
+            .map_err(|e| format!("derive ElGamal keypair: {e}"))?;
+    #[allow(deprecated)]
+    let aes_key = AeKey::new_from_signer_legacy(authority, &token_account.to_bytes())
         .map_err(|e| format!("derive AES key: {e}"))?;
 
     let max_pending_balance_credit_counter: u64 = 65536;
@@ -74,10 +62,6 @@ pub async fn configure_account_with_extensions(
 
     let proof_data = build_pubkey_validity_proof_data(&elgamal_keypair)
         .map_err(|e| format!("generate pubkey validity proof: {e}"))?;
-
-    let proof_account = Keypair::new();
-    let context_state_size = size_of::<ProofContextState<PubkeyValidityProofContext>>();
-    let context_state_rent = client.get_minimum_balance_for_rent_exemption(context_state_size)?;
 
     let mut extensions = vec![ExtensionType::ConfidentialTransferAccount];
     extensions.extend_from_slice(extra_extensions);
@@ -90,26 +74,9 @@ pub async fn configure_account_with_extensions(
         &extensions,
     )?;
 
-    let create_proof_account_ix = system_instruction::create_account(
-        &payer.pubkey(),
-        &proof_account.pubkey(),
-        context_state_rent,
-        context_state_size as u64,
-        &ZK_PROOF_PROGRAM_ID,
-    );
-
-    let proof_account_addr: Address = proof_account.pubkey().to_bytes().into();
-    let authority_addr: Address = authority.pubkey().to_bytes().into();
-    let verify_ix = ProofInstruction::VerifyPubkeyValidity.encode_verify_proof(
-        Some(ContextStateInfo {
-            context_state_account: &proof_account_addr,
-            context_state_authority: &authority_addr,
-        }),
-        &proof_data,
-    );
-
-    let proof_location: ProofLocation<PubkeyValidityProofData> =
-        ProofLocation::ContextStateAccount(&proof_account.pubkey());
+    // Offset 1: the builder appends the VerifyPubkeyValidity instruction
+    // directly after `configure_account`; realloc precedes both.
+    let proof_location = ProofLocation::InstructionOffset(NonZeroI8::new(1).unwrap(), &proof_data);
     let configure_ixs = configure_account(
         &spl_token_2022::id(),
         &token_account,
@@ -121,17 +88,16 @@ pub async fn configure_account_with_extensions(
         proof_location,
     )?;
 
-    let mut instructions = vec![realloc_ix, create_proof_account_ix, verify_ix];
+    let mut instructions = vec![realloc_ix];
     instructions.extend(configure_ixs);
 
-    let blockhash = client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
+    let signature = send_v1_tx(
+        client,
         &instructions,
-        Some(&payer.pubkey()),
-        &[authority, payer, &proof_account],
-        blockhash,
-    );
-    let signature = client.send_and_confirm_transaction(&transaction)?;
+        &payer.pubkey(),
+        &[payer, authority],
+        CU_LIMIT_CONFIGURE,
+    )?;
 
     println!(
         "✅ Account configured for confidential transfers: {}",

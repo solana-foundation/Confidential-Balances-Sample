@@ -28,6 +28,7 @@ use conf_balances_examples::{
     apply_pending::apply_pending_balance,
     configure::configure_account_for_confidential_transfers,
     deposit::deposit_to_confidential,
+    send::{send_v1_tx, CU_LIMIT_DEFAULT},
     transfer::transfer_confidential_with_progress,
     types::TransferProgress,
 };
@@ -42,7 +43,6 @@ use solana_pubkey::Pubkey;
 use solana_keypair::Keypair;
 use solana_signature::Signature;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
 use solana_system_interface::instruction as system_instruction;
 use spl_associated_token_account::{
     get_associated_token_address_with_program_id,
@@ -282,7 +282,9 @@ async fn main() -> Result<()> {
     ));
     let keys = Keys::load_from_env()?;
 
-    let auditor_elgamal = ElGamalKeypair::new_from_signer(
+    // *_legacy keeps the pre-zk-sdk-7 derivation; existing accounts depend on it.
+    #[allow(deprecated)]
+    let auditor_elgamal = ElGamalKeypair::new_from_signer_legacy(
         &keys.auditor_authority,
         &keys.mint.pubkey().to_bytes(),
     )
@@ -476,19 +478,6 @@ async fn transfer_handler(
     let response = run_blocking(s.clone(), move |s| async move {
         require_initialized(&s)?;
 
-        // spl-token-client uses sender as the fee-payer for proof context
-        // state account creation. Surface a clean error if sender is dry.
-        let sender_lamports = s.rpc.get_balance(&s.keys.sender.pubkey())?;
-        if sender_lamports < 20_000_000 {
-            bail!(
-                "sender {} has {:.6} SOL — fund it first: solana airdrop 1 {} --url {}",
-                s.keys.sender.pubkey(),
-                sender_lamports as f64 / 1_000_000_000f64,
-                s.keys.sender.pubkey(),
-                s.cfg.rpc_url
-            );
-        }
-
         let amount_base = ui_to_base(amount_ui, s.cfg.mint_decimals);
         let progress_tx = s.progress.as_ref();
         let result = transfer_confidential_with_progress(
@@ -511,9 +500,6 @@ async fn transfer_handler(
             }
         };
 
-        // The 3-tx flow puts the actual `inner_transfer` ix in the last tx
-        // (alongside eq_verify + 3 closes), so the transfer signature is the
-        // last one we got back from `transfer_confidential_with_progress`.
         if let Some(transfer_sig) = sigs.last() {
             log_event(&s, "transfer", amount_ui, transfer_sig).await;
         }
@@ -693,14 +679,14 @@ async fn create_confidential_mint(s: &AppState) -> Result<Signature> {
         s.cfg.mint_decimals,
     )?;
 
-    let blockhash = s.rpc.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
+    let sig = send_v1_tx(
+        &s.rpc,
         &[create_ix, init_ct_ix, init_mint_ix],
-        Some(&s.keys.payer.pubkey()),
+        &s.keys.payer.pubkey(),
         &[&s.keys.payer, &s.keys.mint],
-        blockhash,
-    );
-    let sig = s.rpc.send_and_confirm_transaction(&tx)?;
+        CU_LIMIT_DEFAULT,
+    )
+    .map_err(|e| anyhow!("create mint tx: {e}"))?;
     tracing::info!("created confidential mint: {sig}");
     Ok(sig)
 }
@@ -724,14 +710,15 @@ async fn ensure_confidential_account(
             &s.keys.mint.pubkey(),
             &spl_token_2022::id(),
         );
-        let blockhash = s.rpc.get_latest_blockhash()?;
-        let tx = Transaction::new_signed_with_payer(
+        let sig = send_v1_tx(
+            &s.rpc,
             &[ata_ix],
-            Some(&s.keys.payer.pubkey()),
+            &s.keys.payer.pubkey(),
             &[&s.keys.payer],
-            blockhash,
-        );
-        sigs.push(s.rpc.send_and_confirm_transaction(&tx)?);
+            CU_LIMIT_DEFAULT,
+        )
+        .map_err(|e| anyhow!("create ATA tx: {e}"))?;
+        sigs.push(sig);
 
         // 2. Configure for confidential transfers.
         let cfg_sig = configure_account_for_confidential_transfers(
@@ -803,14 +790,14 @@ fn mint_to_sender(s: &AppState, amount_base: u64) -> Result<Signature> {
         &[],
         amount_base,
     )?;
-    let blockhash = s.rpc.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
+    send_v1_tx(
+        &s.rpc,
         &[ix],
-        Some(&s.keys.payer.pubkey()),
+        &s.keys.payer.pubkey(),
         &[&s.keys.payer],
-        blockhash,
-    );
-    Ok(s.rpc.send_and_confirm_transaction(&tx)?)
+        CU_LIMIT_DEFAULT,
+    )
+    .map_err(|e| anyhow!("mint_to tx: {e}"))
 }
 
 // ============================================================================
@@ -869,9 +856,12 @@ fn read_account_view(s: &AppState, owner: &Keypair) -> Result<AccountView> {
 
     let (pending_ct, pending_ui, available_ct, available_ui) = match ct_ext {
         Some(ext) => {
-            let elgamal = ElGamalKeypair::new_from_signer(owner, &token_account.to_bytes())
+            // *_legacy keeps the pre-zk-sdk-7 derivation; existing accounts depend on it.
+            #[allow(deprecated)]
+            let elgamal = ElGamalKeypair::new_from_signer_legacy(owner, &token_account.to_bytes())
                 .map_err(|e| anyhow!("derive ElGamal keypair: {e}"))?;
-            let aes = AeKey::new_from_signer(owner, &token_account.to_bytes())
+            #[allow(deprecated)]
+            let aes = AeKey::new_from_signer_legacy(owner, &token_account.to_bytes())
                 .map_err(|e| anyhow!("derive AES key: {e}"))?;
 
             let pending_lo: ElGamalCiphertext = ext

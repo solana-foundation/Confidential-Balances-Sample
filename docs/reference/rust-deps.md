@@ -6,25 +6,29 @@ This document covers the Rust crates used for Solana Confidential Balances.
 
 ```toml
 [dependencies]
-# Solana Core
-solana-sdk = "3.0.0"
-solana-client = "3.1.6"
-solana-zk-sdk = "6.0.1"  # matches the deployed devnet ZK ElGamal Proof program
+# Solana Core (granular crates; solana-client 4.3 sends v1 transactions)
+solana-client = "4.3.0"
+solana-message = "4.6"       # v1::Message + TransactionConfig
+solana-transaction = { version = "4.3", features = ["wincode"] }
+solana-zk-sdk = "7.0.1"
 
 # SPL Token-2022
-spl-token-2022 = "10.0.0"  # still uses zk-sdk 4.0 transitively
-spl-token-client = "0.18.0"
+spl-token-2022 = "11.0.0"
 spl-associated-token-account = "8.0.0"
 
 # Confidential Transfer Proof Generation
-spl-token-confidential-transfer-proof-generation = "0.6.0"   # zk-sdk 6.0.1
-spl-token-confidential-transfer-proof-extraction = "0.5.1"   # zk-sdk 4.0, for the legacy ProofLocation type
+spl-token-confidential-transfer-proof-generation = "0.6.1"
+spl-token-confidential-transfer-proof-extraction = "0.6.1"
 ```
 
-> The 4.0 ↔ 6.0.1 split is a stopgap until the agave v4 beta / rc crates of
-> `spl-token-client` and `spl-token-2022` are published. See the **Bypass
-> mode** section in the top-level README for how the boundary is bridged in
-> the meantime.
+> The repo assembles instructions directly from `spl-token-2022`'s builders.
+> Single transfers, withdraws, and configures go out as v1 transactions
+> (`src/send.rs`) with the ZK proofs inline via
+> `ProofLocation::InstructionOffset`; the batch and fee flows keep context
+> state accounts. See the **Key Dependencies** section of the top-level README
+> for the full version story. The `spl-token-client` examples below are a
+> general crate reference; this repo does not depend on it (it still emits
+> legacy transactions).
 
 ## solana-zk-sdk
 
@@ -41,7 +45,7 @@ use solana_zk_sdk::encryption::elgamal::{ElGamalKeypair, ElGamalPubkey, ElGamalS
 let keypair = ElGamalKeypair::new_rand();
 
 // From signer (deterministic)
-let keypair = ElGamalKeypair::new_from_signer(&signer, &token_account.to_bytes())?;
+let keypair = ElGamalKeypair::new_from_signer_legacy(&signer, &token_account.to_bytes())?;
 
 // From existing secret key
 let secret = ElGamalSecretKey::new_rand();
@@ -104,7 +108,7 @@ use solana_zk_sdk::encryption::auth_encryption::AeKey;
 let ae_key = AeKey::new_rand();
 
 // From signer (deterministic)
-let ae_key = AeKey::new_from_signer(&signer, &token_account.to_bytes())?;
+let ae_key = AeKey::new_from_signer_legacy(&signer, &token_account.to_bytes())?;
 
 // Encrypt balance for owner-only decryption
 let ciphertext = ae_key.encrypt(balance);
@@ -348,11 +352,11 @@ async fn confidential_transfer(
     transfer_amount: u64,
 ) -> Result<(), Box<dyn Error>> {
     // 1. Derive sender's encryption keys
-    let sender_elgamal_keypair = ElGamalKeypair::new_from_signer(
+    let sender_elgamal_keypair = ElGamalKeypair::new_from_signer_legacy(
         sender_keypair,
         &sender_token_account.to_bytes(),
     )?;
-    let sender_aes_key = AeKey::new_from_signer(
+    let sender_aes_key = AeKey::new_from_signer_legacy(
         sender_keypair,
         &sender_token_account.to_bytes(),
     )?;
