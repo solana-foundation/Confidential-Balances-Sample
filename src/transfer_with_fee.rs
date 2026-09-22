@@ -60,8 +60,8 @@ use spl_token_confidential_transfer_proof_generation::transfer_with_fee::transfe
 use std::mem::size_of;
 
 /// Byte offset of the proof data inside an spl-record account
-/// (`RecordData::WRITABLE_START_INDEX`: 1-byte version + 32-byte authority).
-const RECORD_PROOF_OFFSET: u32 = 33;
+/// (1-byte version + 32-byte authority).
+const RECORD_PROOF_OFFSET: u32 = spl_record::state::RecordData::WRITABLE_START_INDEX as u32;
 
 /// Per-tx write payloads for staging the proof into a record account, sized to
 /// stay under the 1232-byte tx limit. The first write also carries

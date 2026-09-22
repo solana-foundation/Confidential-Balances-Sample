@@ -829,8 +829,7 @@ async fn read_ledger_state(s: &AppState) -> Result<LedgerState> {
         receiver,
         auditor: AuditorView {
             authority: s.keys.auditor_authority.pubkey().to_string(),
-            elgamal_pubkey: bs58::encode(s.auditor_elgamal.pubkey().to_string().as_bytes())
-                .into_string(),
+            elgamal_pubkey: s.auditor_elgamal.pubkey().to_string(),
             recent_events: events,
         },
     })

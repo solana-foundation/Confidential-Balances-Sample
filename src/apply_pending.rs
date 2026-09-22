@@ -10,7 +10,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
 use solana_zk_sdk::encryption::{
-    auth_encryption::AeKey,
+    auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
 use solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext;
@@ -54,25 +54,31 @@ pub async fn apply_pending_balance(
         .pending_balance_hi
         .try_into()
         .map_err(|e| format!("pending_balance_hi: {e:?}"))?;
-    let available_balance: ElGamalCiphertext = ct_extension
-        .available_balance
-        .try_into()
-        .map_err(|e| format!("available_balance: {e:?}"))?;
-
+    // Pending lo/hi are bounded (16-bit split), so decrypt_u32 is fine here.
     let pending_lo_amount = pending_lo
         .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt pending_balance_lo")?;
+        .ok_or("decrypt pending_balance_lo")? as u64;
     let pending_hi_amount = pending_hi
         .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt pending_balance_hi")?;
-    let current_available = available_balance
-        .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt available_balance")?;
+        .ok_or("decrypt pending_balance_hi")? as u64;
+
+    // Read the current available balance from the AES-encrypted decryptable
+    // balance. ElGamal's decrypt_u32 only recovers values up to 2^32 raw
+    // units, so it fails for realistic balances; the AES field has no limit.
+    let current_decryptable: AeCiphertext = ct_extension
+        .decryptable_available_balance
+        .try_into()
+        .map_err(|e| format!("decryptable_available_balance: {e:?}"))?;
+    let current_available = current_decryptable
+        .decrypt(&aes_key)
+        .ok_or("decrypt decryptable_available_balance")?;
 
     let pending_total = pending_lo_amount + (pending_hi_amount << 16);
-    let new_available = current_available + pending_total;
+    let new_available = current_available
+        .checked_add(pending_total)
+        .ok_or("available + pending overflows u64")?;
 
-    let new_decryptable: PodAeCiphertext = aes_key.encrypt(new_available as u64).into();
+    let new_decryptable: PodAeCiphertext = aes_key.encrypt(new_available).into();
 
     let expected_counter: u64 = ct_extension.pending_balance_credit_counter.into();
 

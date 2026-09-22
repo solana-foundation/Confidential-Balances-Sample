@@ -21,7 +21,7 @@ use solana_zk_elgamal_proof_interface::{
     state::ProofContextState,
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::AeKey,
+    auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
 use solana_zk_sdk_pod::encryption::auth_encryption::PodAeCiphertext;
@@ -71,9 +71,16 @@ pub async fn withdraw_from_confidential(
         .try_into()
         .map_err(|e| format!("decode available_balance: {e:?}"))?;
 
-    let current_available = available_balance
-        .decrypt_u32(elgamal_keypair.secret())
-        .ok_or("decrypt available balance")? as u64;
+    // Read the plaintext balance from the AES-encrypted decryptable balance.
+    // ElGamal's decrypt_u32 only recovers values up to 2^32 raw units, so it
+    // fails for realistic balances; the AES field has no limit.
+    let current_decryptable: AeCiphertext = ct_extension
+        .decryptable_available_balance
+        .try_into()
+        .map_err(|e| format!("decode decryptable_available_balance: {e:?}"))?;
+    let current_available = current_decryptable
+        .decrypt(&aes_key)
+        .ok_or("decrypt decryptable_available_balance")?;
 
     if current_available < amount {
         return Err(format!(
