@@ -5,6 +5,7 @@
 
 pub mod types;
 pub mod configure;
+pub mod keys;
 pub mod deposit;
 pub mod apply_pending;
 pub mod withdraw;

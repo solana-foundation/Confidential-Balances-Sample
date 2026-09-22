@@ -12,7 +12,7 @@ use solana_sdk::{
     signature::{Keypair, Signer},
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::{AeCiphertext, AeKey},
+    auth_encryption::AeCiphertext,
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
@@ -41,14 +41,8 @@ fn display_balances(
     );
 
     // Derive encryption keys
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(
-        owner,
-        &token_account.to_bytes(),
-    )?;
-    let aes_key = AeKey::new_from_signer(
-        owner,
-        &token_account.to_bytes(),
-    )?;
+    let (elgamal_keypair, aes_key) =
+        conf_balances_examples::keys::derive_confidential_keys(owner)?;
 
     // Fetch account data
     let account_data = client.get_account(&token_account)?;
