@@ -123,7 +123,8 @@ flowchart TB
 3. **ZK ElGamal Proof Program**
    - Program ID: `ZkE1Gama1Proof11111111111111111111111111111`
    - Verifies zero-knowledge proofs on-chain
-   - Stores large proofs in context state accounts
+   - Single transfers carry proofs inline in one v1 transaction; the batch and
+     fee flows store theirs in context state accounts
    - Referenced by Token-2022 transfer instructions
 
 ## Getting Started
@@ -132,17 +133,18 @@ flowchart TB
 
 - Solana CLI 2.1.13+ (`solana --version`)
 - SPL Token CLI 5.1.0+ (`spl-token --version`)
-- Rust 1.70+
+- Rust 1.97.1+
+- A cluster running agave 4.1+ (v1 transactions need it): devnet and mainnet
+  qualify, an older local `solana-test-validator` does not
 
 ### Running the Examples
 
 This repository includes a complete Rust implementation of all confidential transfer operations.
 
 ```bash
-# Start local test validator
-solana-test-validator --quiet --reset &
-
-# Run all integration tests
+# Run all integration tests (against devnet; see the cluster note above)
+SOLANA_RPC_URL=https://api.devnet.solana.com \
+PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) \
 cargo test --test integration_test
 
 # Run end-to-end transfer example (shows balance changes throughout)
