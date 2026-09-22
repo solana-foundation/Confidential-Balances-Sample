@@ -68,6 +68,30 @@ fn derive_encryption_keys(
    expose it only through a dedicated derivation flow and refuse generic
    signMessage requests starting with that prefix
 
+### Migrating Accounts Configured with the Legacy Derivation
+
+Accounts configured before this standard derived their keys from a signature
+seeded with the token account address (`new_from_signer_legacy`). Their
+on-chain ElGamal pubkey and ciphertexts stay bound to those keys: switching
+the wallet to `solana-conf-bal/v1` re-encrypts nothing, so reading such an
+account with the new keys fails to decrypt, and transfers built with the new
+keys are rejected because the registered ElGamal pubkey does not match.
+
+The registered pubkey is set once when the account is configured and cannot
+be rotated, so moving a balance onto the standard keys takes three steps:
+
+1. Derive the legacy keys (seed = token account address) and apply any
+   pending balance.
+2. Withdraw the full available balance to the public balance using the
+   legacy keys.
+3. Configure a fresh token account with the `solana-conf-bal/v1` keys, then
+   deposit and apply. The associated token account for the wallet and mint
+   already carries the legacy registration, so the fresh account must be an
+   auxiliary (non-associated) token account, or the ATA of a new wallet.
+
+Wallets that have shipped the legacy derivation should keep it available in
+read-only form for exactly this path.
+
 ## Balance Display
 
 ### Balance Types in Confidential Accounts
