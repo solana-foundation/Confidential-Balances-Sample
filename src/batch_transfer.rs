@@ -556,7 +556,24 @@ pub async fn batch_transfer_atomic(
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[payer, sender])
         .map_err(|e| format!("sign v0 transaction: {e}"))?;
 
-    let atomic_sig = client.send_and_confirm_transaction(&tx)?;
+    // If the atomic tx fails (CU limit, account conflict, RPC timeout), close
+    // the staged proof accounts before surfacing the error so their rent isn't
+    // stranded; payer is the context-state authority on all of them.
+    let atomic_sig = match client.send_and_confirm_transaction(&tx) {
+        Ok(sig) => sig,
+        Err(e) => {
+            for staged in &staged_legs {
+                let close_ixs = close_leg_ixs(&payer.pubkey(), staged);
+                if send_tx(client, &close_ixs, &[payer], &payer.pubkey()).is_err() {
+                    eprintln!(
+                        "⚠️ close these proof context accounts manually: {} {} {}",
+                        staged.equality_account, staged.validity_account, staged.range_account
+                    );
+                }
+            }
+            return Err(format!("atomic batch transfer failed: {e}").into());
+        }
+    };
     sigs.push(atomic_sig);
     println!(
         "✅ Atomic batch transfer complete: {} legs in 1 transaction [{}]",
