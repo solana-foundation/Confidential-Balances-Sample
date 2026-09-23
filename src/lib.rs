@@ -9,6 +9,10 @@ pub mod deposit;
 pub mod apply_pending;
 pub mod withdraw;
 pub mod transfer;
+pub mod transfer_with_fee;
+pub mod batch_transfer;
+pub mod balances;
+pub mod setup;
 
 // Re-export common types
 pub use types::*;

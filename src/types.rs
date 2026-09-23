@@ -1,6 +1,6 @@
 //! Common types for confidential transfer operations
 
-use solana_sdk::signature::Signature;
+use solana_signature::Signature;
 use std::error::Error;
 
 /// Result type for confidential transfer operations

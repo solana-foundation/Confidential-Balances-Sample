@@ -16,7 +16,8 @@ mod common;
 
 use common::*;
 use conf_balances_examples::*;
-use solana_sdk::signature::{Keypair, Signer};
+use solana_keypair::Keypair;
+use solana_signer::Signer;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_configure_account() {
