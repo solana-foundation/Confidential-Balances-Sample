@@ -8,35 +8,35 @@ name = "demo-server"
 path = "src/bin/demo-server.rs"
 
 [dependencies]
-# Solana core via granular crates, no solana-sdk umbrella. The whole graph is
-# on solana-zk-sdk 6.0.1 (spl-token-2022 11.0.0 targets it natively, so there's
-# no 4.0 to 6.0.1 split and no byte-casting).
-#
-# solana-client is the 4.0.0-rc.0 line: its rpc-client is built on the 3.x
-# transaction/message types, so we pin solana-transaction to 3.1 to match it.
-# Everything resolves to solana-pubkey 4.2 (= solana_address::Address), so
-# Pubkey == Address and no conversions are needed. Using the umbrella solana-sdk
-# 4.x instead would drag in transaction 4.x (mismatch with the rc rpc-client)
-# and the wincode skew, hence the granular crates.
-solana-client = "4.0.0-rc.0"
-solana-pubkey = "4.2"
+# Solana core via granular crates, no solana-sdk umbrella. solana-client 4.3
+# (stable) sends v1 transactions through wincode; solana-message 4.6 has the
+# v1 module (TransactionConfig in the header, 4096-byte limit). Everything
+# resolves to one solana-instruction 3.5.x / solana-address 2.7.x stack, so
+# Pubkey == Address and no conversions are needed. VersionedTransaction::try_new
+# is behind solana-transaction's "wincode" feature.
+solana-client = "4.3.0"
+solana-pubkey = "4.3"
 solana-keypair = "3.1"
 solana-signer = "3.0"
-solana-signature = "3.0"
-solana-transaction = "3.1"
-solana-instruction = "3.4"
+solana-signature = "3.5"
+solana-transaction = { version = "4.3", features = ["wincode"] }
+solana-message = "4.6"
+solana-instruction = "3.5"
 solana-native-token = "3.0"
-solana-zk-sdk = "6.0.1"
+solana-zk-sdk = "7.0.1"
 solana-system-interface = { version = "3.2.0", features = ["bincode"] }
 
-# SPL Token-2022 (agave v4 aligned). token-2022 11.0.0 builds on zk-sdk 6.0.1
-# and proof-{extraction,generation} 0.6.0 directly.
+# SPL Token-2022. Single transfers, withdraws, and configures carry their
+# proofs inline via ProofLocation::InstructionOffset in one v1 transaction;
+# proof-generation 0.6.1 is the zk-sdk 7 line. new_from_signer_legacy keeps
+# key derivation byte-identical to the pre-7 new_from_signer.
 spl-token-2022 = { version = "11.0.0", features = ["zk-ops"] }
 spl-associated-token-account = "8.0.0"
-spl-token-confidential-transfer-proof-extraction = "0.6.0"
-spl-token-confidential-transfer-proof-generation = "0.6.0"
+spl-token-confidential-transfer-proof-extraction = "0.6.1"
+spl-token-confidential-transfer-proof-generation = "0.6.1"
 
-# ZK ElGamal proof-program helpers (create/verify/close context state accounts).
+# ZK ElGamal proof-program helpers. Still used by the batch and fee flows,
+# which pre-verify proofs into context state accounts.
 solana-zk-elgamal-proof-interface = "0.1.2"
 solana-zk-sdk-pod = "0.1.2"
 solana-address = "2.6"
@@ -52,7 +52,6 @@ bytemuck = "1.25"
 # budget bump so the batch clears the per-tx CU ceiling.
 solana-address-lookup-table-interface = { version = "3.1.0", features = ["bincode"] }
 solana-compute-budget-interface = "3.0.0"
-solana-message = "3.1"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

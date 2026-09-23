@@ -50,13 +50,13 @@ fn derive_encryption_keys(
     token_account: &solana_sdk::pubkey::Pubkey,
 ) -> Result<(ElGamalKeypair, AeKey), Box<dyn std::error::Error>> {
     // Derive ElGamal keypair deterministically from signer
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(
+    let elgamal_keypair = ElGamalKeypair::new_from_signer_legacy(
         signer,
         &token_account.to_bytes(),
     )?;
 
     // Derive AES key for efficient balance viewing
-    let aes_key = AeKey::new_from_signer(
+    let aes_key = AeKey::new_from_signer_legacy(
         signer,
         &token_account.to_bytes(),
     )?;

@@ -43,7 +43,7 @@
 //!   size/CU ceiling and unbounded fan-out, at the cost of one confirmation per
 //!   leg. Legs must land in order or a later leg's proof goes stale.
 
-use crate::transfer::{send_tx, ZK_PROOF_PROGRAM_ID};
+use crate::send::{send_legacy_tx as send_tx, ZK_PROOF_PROGRAM_ID};
 use crate::types::*;
 use solana_address::Address;
 use solana_address_lookup_table_interface::instruction::{
@@ -402,8 +402,10 @@ pub async fn batch_transfer_pipelined(
 ) -> MultiSigResult {
     let sender_token_account =
         get_associated_token_address_with_program_id(&sender.pubkey(), mint, &spl_token_2022::id());
-    let sender_elgamal = ElGamalKeypair::new_from_signer(sender, &sender_token_account.to_bytes())?;
-    let sender_aes = AeKey::new_from_signer(sender, &sender_token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let sender_elgamal = ElGamalKeypair::new_from_signer_legacy(sender, &sender_token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let sender_aes = AeKey::new_from_signer_legacy(sender, &sender_token_account.to_bytes())?;
     let auditor = fetch_auditor_pubkey(client, mint)?;
 
     let prepared = prepare_legs(
@@ -471,8 +473,10 @@ pub async fn batch_transfer_atomic(
 ) -> MultiSigResult {
     let sender_token_account =
         get_associated_token_address_with_program_id(&sender.pubkey(), mint, &spl_token_2022::id());
-    let sender_elgamal = ElGamalKeypair::new_from_signer(sender, &sender_token_account.to_bytes())?;
-    let sender_aes = AeKey::new_from_signer(sender, &sender_token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let sender_elgamal = ElGamalKeypair::new_from_signer_legacy(sender, &sender_token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let sender_aes = AeKey::new_from_signer_legacy(sender, &sender_token_account.to_bytes())?;
     let auditor = fetch_auditor_pubkey(client, mint)?;
 
     let prepared = prepare_legs(

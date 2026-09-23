@@ -14,7 +14,7 @@
 //! account across multiple write transactions and verified from there with
 //! `encode_verify_proof_from_account`.
 
-use crate::transfer::{send_tx, ZK_PROOF_PROGRAM_ID};
+use crate::send::{send_legacy_tx as send_tx, ZK_PROOF_PROGRAM_ID};
 use crate::types::*;
 use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
@@ -125,9 +125,11 @@ pub async fn transfer_confidential_with_fee(
         .map_err(|e| format!("withdraw-withheld authority ElGamal pubkey: {e:?}"))?;
 
     // ----- Sender keys and balances -----
-    let sender_elgamal = ElGamalKeypair::new_from_signer(sender, &sender_token_account.to_bytes())
+    #[allow(deprecated)]
+    let sender_elgamal = ElGamalKeypair::new_from_signer_legacy(sender, &sender_token_account.to_bytes())
         .map_err(|e| format!("derive sender ElGamal: {e}"))?;
-    let sender_aes = AeKey::new_from_signer(sender, &sender_token_account.to_bytes())
+    #[allow(deprecated)]
+    let sender_aes = AeKey::new_from_signer_legacy(sender, &sender_token_account.to_bytes())
         .map_err(|e| format!("derive sender AES: {e}"))?;
 
     let sender_acc_data = client.get_account(&sender_token_account)?;
