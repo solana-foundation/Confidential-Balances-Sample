@@ -127,7 +127,7 @@ fn get_confidential_balance(
     );
 
     // Derive encryption keys
-    let (elgamal_keypair, aes_key) = derive_encryption_keys(owner, &token_account)?;
+    let (_, aes_key) = derive_encryption_keys(owner)?;
 
     // Fetch account data
     let account_data = client.get_account(&token_account)?;
@@ -136,9 +136,13 @@ fn get_confidential_balance(
     // Get confidential transfer extension
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
-    // Decrypt available balance using AES (most efficient)
-    let decryptable_balance: spl_token_2022::solana_zk_sdk::encryption::auth_encryption::AeCiphertext =
-        ct_extension.decryptable_available_balance.try_into()?;
+    // Decrypt available balance using AES (most efficient), decoded into the
+    // same zk-sdk version as the key
+    let decryptable_balance =
+        solana_zk_sdk::encryption::auth_encryption::AeCiphertext::from_bytes(
+            bytemuck::bytes_of(&ct_extension.decryptable_available_balance),
+        )
+        .ok_or("invalid aes ciphertext")?;
 
     let available_balance = aes_key.decrypt(&decryptable_balance)
         .ok_or("Failed to decrypt balance")?;
@@ -158,16 +162,21 @@ fn get_all_balances(
         &spl_token_2022::id(),
     );
 
-    let (elgamal_keypair, aes_key) = derive_encryption_keys(owner, &token_account)?;
+    let (elgamal_keypair, aes_key) = derive_encryption_keys(owner)?;
     let account_data = client.get_account(&token_account)?;
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
     // Decrypt pending balance
-    let pending_lo: spl_token_2022::solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        ct_extension.pending_balance_lo.try_into()?;
-    let pending_hi: spl_token_2022::solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        ct_extension.pending_balance_hi.try_into()?;
+    use solana_zk_sdk::encryption::elgamal::ElGamalCiphertext;
+    let pending_lo = ElGamalCiphertext::from_bytes(
+        bytemuck::bytes_of(&ct_extension.pending_balance_lo),
+    )
+    .ok_or("invalid pending_lo ciphertext")?;
+    let pending_hi = ElGamalCiphertext::from_bytes(
+        bytemuck::bytes_of(&ct_extension.pending_balance_hi),
+    )
+    .ok_or("invalid pending_hi ciphertext")?;
 
     let pending_lo_amount = pending_lo.decrypt_u32(elgamal_keypair.secret())
         .ok_or("Failed to decrypt pending_lo")?;
@@ -176,8 +185,11 @@ fn get_all_balances(
     let pending_total = pending_lo_amount + (pending_hi_amount << 16);
 
     // Decrypt available balance
-    let decryptable_balance: spl_token_2022::solana_zk_sdk::encryption::auth_encryption::AeCiphertext =
-        ct_extension.decryptable_available_balance.try_into()?;
+    let decryptable_balance =
+        solana_zk_sdk::encryption::auth_encryption::AeCiphertext::from_bytes(
+            bytemuck::bytes_of(&ct_extension.decryptable_available_balance),
+        )
+        .ok_or("invalid aes ciphertext")?;
     let available = aes_key.decrypt(&decryptable_balance)
         .ok_or("Failed to decrypt available balance")?;
 
