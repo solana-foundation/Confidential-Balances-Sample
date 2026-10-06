@@ -40,7 +40,8 @@ use solana_zk_sdk::encryption::elgamal::{ElGamalKeypair, ElGamalPubkey, ElGamalS
 // Random keypair
 let keypair = ElGamalKeypair::new_rand();
 
-// From signer (deterministic)
+// From signer (legacy scheme; the solana-conf-bal/v1 standard in zk-sdk >= 7
+// is derivation::derive_confidential_keys, wallet-level and sign-once)
 let keypair = ElGamalKeypair::new_from_signer(&signer, &token_account.to_bytes())?;
 
 // From existing secret key
@@ -103,7 +104,7 @@ use solana_zk_sdk::encryption::auth_encryption::AeKey;
 // Generate key
 let ae_key = AeKey::new_rand();
 
-// From signer (deterministic)
+// From signer (legacy scheme; prefer derivation::derive_confidential_keys)
 let ae_key = AeKey::new_from_signer(&signer, &token_account.to_bytes())?;
 
 // Encrypt balance for owner-only decryption
@@ -347,15 +348,10 @@ async fn confidential_transfer(
     auditor_elgamal_pubkey: Option<&ElGamalPubkey>,
     transfer_amount: u64,
 ) -> Result<(), Box<dyn Error>> {
-    // 1. Derive sender's encryption keys
-    let sender_elgamal_keypair = ElGamalKeypair::new_from_signer(
-        sender_keypair,
-        &sender_token_account.to_bytes(),
-    )?;
-    let sender_aes_key = AeKey::new_from_signer(
-        sender_keypair,
-        &sender_token_account.to_bytes(),
-    )?;
+    // 1. Derive sender's encryption keys: the solana-conf-bal/v1 standard,
+    //    one signature, wallet-level (see src/keys.rs)
+    let (sender_elgamal_keypair, sender_aes_key) =
+        crate::keys::derive_confidential_keys(sender_keypair)?;
     
     // 2. Get sender account state
     let sender_account_info = token.get_account_info(sender_token_account).await?;

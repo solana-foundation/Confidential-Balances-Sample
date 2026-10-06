@@ -24,8 +24,8 @@ use solana_sdk::{
     signature::{read_keypair_file, Keypair, Signer},
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::{AeCiphertext, AeKey},
-    elgamal::{ElGamalCiphertext, ElGamalKeypair},
+    auth_encryption::AeCiphertext,
+    elgamal::ElGamalCiphertext,
 };
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
@@ -62,14 +62,8 @@ fn get_balances(
     println!("🔍 Fetching account: {}", token_account);
 
     // Derive encryption keys from owner
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(
-        owner,
-        &token_account.to_bytes(),
-    )?;
-    let aes_key = AeKey::new_from_signer(
-        owner,
-        &token_account.to_bytes(),
-    )?;
+    let (elgamal_keypair, aes_key) =
+        conf_balances_examples::keys::derive_confidential_keys(owner)?;
 
     println!("🔑 Derived encryption keys from owner signature");
 

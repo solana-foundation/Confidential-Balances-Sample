@@ -25,8 +25,8 @@ use solana_zk_elgamal_proof_interface::{
     state::ProofContextState,
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::{AeCiphertext, AeKey},
-    elgamal::{ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey},
+    auth_encryption::AeCiphertext,
+    elgamal::{ElGamalCiphertext, ElGamalPubkey},
 };
 use solana_zk_sdk_pod::encryption::elgamal::{
     PodElGamalCiphertext as PodElGamalCiphertextV6, PodElGamalPubkey as PodElGamalPubkeyV6,
@@ -149,10 +149,8 @@ pub async fn transfer_confidential_with_progress(
         "derive-keys",
         "Deriving sender's ElGamal and AES keys from authority signature",
     );
-    let sender_elgamal = ElGamalKeypair::new_from_signer(sender, &sender_token_account.to_bytes())
-        .map_err(|e| format!("derive sender ElGamal: {e}"))?;
-    let sender_aes = AeKey::new_from_signer(sender, &sender_token_account.to_bytes())
-        .map_err(|e| format!("derive sender AES: {e}"))?;
+    let (sender_elgamal, sender_aes) = crate::keys::derive_confidential_keys(sender)
+        .map_err(|e| format!("derive sender keys: {e}"))?;
 
     // ----- Sender state: available balance + decryptable available balance -----
     let sender_acc_data = client.get_account(&sender_token_account)?;

@@ -20,10 +20,7 @@ use solana_zk_elgamal_proof_interface::{
     proof_data::{BatchedRangeProofContext, CiphertextCommitmentEqualityProofContext},
     state::ProofContextState,
 };
-use solana_zk_sdk::encryption::{
-    auth_encryption::AeKey,
-    elgamal::{ElGamalCiphertext, ElGamalKeypair},
-};
+use solana_zk_sdk::encryption::elgamal::ElGamalCiphertext;
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalCiphertext as PodElGamalCiphertextV6;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
@@ -60,8 +57,8 @@ pub async fn withdraw_from_confidential(
         &spl_token_2022::id(),
     );
 
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(authority, &token_account.to_bytes())?;
-    let aes_key = AeKey::new_from_signer(authority, &token_account.to_bytes())?;
+    // Standard wallet-level keys (solana-conf-bal/v1).
+    let (elgamal_keypair, aes_key) = crate::keys::derive_confidential_keys(authority)?;
 
     let account_data = client.get_account(&token_account)?;
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;

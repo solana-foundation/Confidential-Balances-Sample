@@ -15,22 +15,24 @@ Wallets integrating confidential transfers need to handle:
 
 ### Key Derivation Process
 
-Each confidential token account requires two encryption keys derived from wallet signatures:
+Each confidential account uses two encryption keys, both derived from one
+wallet signature over the constant message `solana-conf-bal/v1` (the
+solana-conf-bal/v1 standard). The keys are bound to the wallet alone, so a
+wallet derives one key pair for all of its confidential balances, and every
+standard client (spl-token CLI, @solana-program/token-2022, @solana/zk-sdk,
+solana-go) derives the same keys for the same wallet:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
 │                  KEY DERIVATION FLOW                      │
 ├───────────────────────────────────────────────────────────┤
 │                                                           │
-│  1. ElGamal Key Derivation                                │
-│     ├─ Seed Message: "ElGamalSecretKey"                   │
-│     ├─ Sign: wallet.signMessage(seed + publicSeed)        │
-│     └─ Derive: ElGamalKeypair.fromSignature(signature)    │
+│  1. Sign once                                             │
+│     └─ signature = wallet.sign("solana-conf-bal/v1")      │
 │                                                           │
-│  2. AES Key Derivation                                    │
-│     ├─ Seed Message: "AeKey"                              │
-│     ├─ Sign: wallet.signMessage(seed + publicSeed)        │
-│     └─ Derive: AeKey.fromSignature(signature)             │
+│  2. Expand both keys (HKDF-SHA512)                        │
+│     ├─ ElGamal keypair (info = "elgamal")                 │
+│     └─ AES key        (info = "ae")                       │
 │                                                           │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -39,29 +41,19 @@ Each confidential token account requires two encryption keys derived from wallet
 
 ```rust
 use solana_sdk::signer::Signer;
-use spl_token_2022::solana_zk_sdk::encryption::{
+use solana_zk_sdk::encryption::{
     auth_encryption::AeKey,
     elgamal::ElGamalKeypair,
 };
 
-/// Derive encryption keys for a token account
+/// Derive the wallet's confidential-balance keys (solana-conf-bal/v1).
 fn derive_encryption_keys(
     signer: &dyn Signer,
-    token_account: &solana_sdk::pubkey::Pubkey,
 ) -> Result<(ElGamalKeypair, AeKey), Box<dyn std::error::Error>> {
-    // Derive ElGamal keypair deterministically from signer
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(
-        signer,
-        &token_account.to_bytes(),
-    )?;
-
-    // Derive AES key for efficient balance viewing
-    let aes_key = AeKey::new_from_signer(
-        signer,
-        &token_account.to_bytes(),
-    )?;
-
-    Ok((elgamal_keypair, aes_key))
+    // One signature over the constant message derives both keys, bound to
+    // the wallet alone. This crate's wrapper derives with zk-sdk 7 and
+    // returns the 6.0.1 key types the proof pipeline consumes (src/keys.rs).
+    conf_balances_examples::keys::derive_confidential_keys(signer)
 }
 ```
 
@@ -71,6 +63,34 @@ fn derive_encryption_keys(
 2. **Key Storage** - Either derive on-the-fly or store encrypted locally
 3. **Never Transmit** - Keys must never be shared with unauthorized parties
 4. **Backup Critical** - Loss of keys = permanent loss of confidential balance
+5. **Guard the Derivation Message** - A signature over `solana-conf-bal/v1`
+   is the input key material for the wallet's decryption keys. Wallets should
+   expose it only through a dedicated derivation flow and refuse generic
+   signMessage requests starting with that prefix
+
+### Migrating Accounts Configured with the Legacy Derivation
+
+Accounts configured before this standard derived their keys from a signature
+seeded with the token account address (`new_from_signer_legacy`). Their
+on-chain ElGamal pubkey and ciphertexts stay bound to those keys: switching
+the wallet to `solana-conf-bal/v1` re-encrypts nothing, so reading such an
+account with the new keys fails to decrypt, and transfers built with the new
+keys are rejected because the registered ElGamal pubkey does not match.
+
+The registered pubkey is set once when the account is configured and cannot
+be rotated, so moving a balance onto the standard keys takes three steps:
+
+1. Derive the legacy keys (seed = token account address) and apply any
+   pending balance.
+2. Withdraw the full available balance to the public balance using the
+   legacy keys.
+3. Configure a fresh token account with the `solana-conf-bal/v1` keys, then
+   deposit and apply. The associated token account for the wallet and mint
+   already carries the legacy registration, so the fresh account must be an
+   auxiliary (non-associated) token account, or the ATA of a new wallet.
+
+Wallets that have shipped the legacy derivation should keep it available in
+read-only form for exactly this path.
 
 ## Balance Display
 
@@ -107,7 +127,7 @@ fn get_confidential_balance(
     );
 
     // Derive encryption keys
-    let (elgamal_keypair, aes_key) = derive_encryption_keys(owner, &token_account)?;
+    let (_, aes_key) = derive_encryption_keys(owner)?;
 
     // Fetch account data
     let account_data = client.get_account(&token_account)?;
@@ -116,9 +136,13 @@ fn get_confidential_balance(
     // Get confidential transfer extension
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
-    // Decrypt available balance using AES (most efficient)
-    let decryptable_balance: spl_token_2022::solana_zk_sdk::encryption::auth_encryption::AeCiphertext =
-        ct_extension.decryptable_available_balance.try_into()?;
+    // Decrypt available balance using AES (most efficient), decoded into the
+    // same zk-sdk version as the key
+    let decryptable_balance =
+        solana_zk_sdk::encryption::auth_encryption::AeCiphertext::from_bytes(
+            bytemuck::bytes_of(&ct_extension.decryptable_available_balance),
+        )
+        .ok_or("invalid aes ciphertext")?;
 
     let available_balance = aes_key.decrypt(&decryptable_balance)
         .ok_or("Failed to decrypt balance")?;
@@ -138,16 +162,21 @@ fn get_all_balances(
         &spl_token_2022::id(),
     );
 
-    let (elgamal_keypair, aes_key) = derive_encryption_keys(owner, &token_account)?;
+    let (elgamal_keypair, aes_key) = derive_encryption_keys(owner)?;
     let account_data = client.get_account(&token_account)?;
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
     let ct_extension = account.get_extension::<ConfidentialTransferAccount>()?;
 
     // Decrypt pending balance
-    let pending_lo: spl_token_2022::solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        ct_extension.pending_balance_lo.try_into()?;
-    let pending_hi: spl_token_2022::solana_zk_sdk::encryption::elgamal::ElGamalCiphertext =
-        ct_extension.pending_balance_hi.try_into()?;
+    use solana_zk_sdk::encryption::elgamal::ElGamalCiphertext;
+    let pending_lo = ElGamalCiphertext::from_bytes(
+        bytemuck::bytes_of(&ct_extension.pending_balance_lo),
+    )
+    .ok_or("invalid pending_lo ciphertext")?;
+    let pending_hi = ElGamalCiphertext::from_bytes(
+        bytemuck::bytes_of(&ct_extension.pending_balance_hi),
+    )
+    .ok_or("invalid pending_hi ciphertext")?;
 
     let pending_lo_amount = pending_lo.decrypt_u32(elgamal_keypair.secret())
         .ok_or("Failed to decrypt pending_lo")?;
@@ -156,8 +185,11 @@ fn get_all_balances(
     let pending_total = pending_lo_amount + (pending_hi_amount << 16);
 
     // Decrypt available balance
-    let decryptable_balance: spl_token_2022::solana_zk_sdk::encryption::auth_encryption::AeCiphertext =
-        ct_extension.decryptable_available_balance.try_into()?;
+    let decryptable_balance =
+        solana_zk_sdk::encryption::auth_encryption::AeCiphertext::from_bytes(
+            bytemuck::bytes_of(&ct_extension.decryptable_available_balance),
+        )
+        .ok_or("invalid aes ciphertext")?;
     let available = aes_key.decrypt(&decryptable_balance)
         .ok_or("Failed to decrypt available balance")?;
 

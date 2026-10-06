@@ -61,7 +61,7 @@ use spl_token_2022::{
     state::{Account as TokenAccount, Mint},
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::{AeCiphertext, AeKey},
+    auth_encryption::AeCiphertext,
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
 };
 use solana_zk_sdk_pod::encryption::elgamal::{
@@ -285,11 +285,11 @@ async fn main() -> Result<()> {
     ));
     let keys = Keys::load_from_env()?;
 
-    let auditor_elgamal = ElGamalKeypair::new_from_signer(
-        &keys.auditor_authority,
-        &keys.mint.pubkey().to_bytes(),
-    )
-    .map_err(|e| anyhow!("derive auditor ElGamal keypair: {e}"))?;
+    // Standard wallet-level keys (solana-conf-bal/v1): the auditor keypair is
+    // bound to the auditor authority wallet.
+    let (auditor_elgamal, _auditor_aes) =
+        conf_balances_examples::keys::derive_confidential_keys(&keys.auditor_authority)
+            .map_err(|e| anyhow!("derive auditor ElGamal keypair: {e}"))?;
 
     tracing::info!("rpc:        {}", cfg.rpc_url);
     tracing::info!("payer:      {}", keys.payer.pubkey());
@@ -874,10 +874,9 @@ fn read_account_view(s: &AppState, owner: &Keypair) -> Result<AccountView> {
 
     let (pending_ct, pending_ui, available_ct, available_ui) = match ct_ext {
         Some(ext) => {
-            let elgamal = ElGamalKeypair::new_from_signer(owner, &token_account.to_bytes())
-                .map_err(|e| anyhow!("derive ElGamal keypair: {e}"))?;
-            let aes = AeKey::new_from_signer(owner, &token_account.to_bytes())
-                .map_err(|e| anyhow!("derive AES key: {e}"))?;
+            let (elgamal, aes) =
+                conf_balances_examples::keys::derive_confidential_keys(owner)
+                    .map_err(|e| anyhow!("derive confidential keys: {e}"))?;
 
             // 4.0 POD ciphertexts on chain → 6.0.1 PODs via byte cast → 6.0.1
             // ElGamalCiphertext / AeCiphertext for the actual decryption.

@@ -20,10 +20,7 @@ use solana_zk_elgamal_proof_interface::{
     proof_data::PubkeyValidityProofContext,
     state::ProofContextState,
 };
-use solana_zk_sdk::{
-    encryption::{auth_encryption::AeKey, elgamal::ElGamalKeypair},
-    zk_elgamal_proof_program::pubkey_validity::build_pubkey_validity_proof_data,
-};
+use solana_zk_sdk::zk_elgamal_proof_program::pubkey_validity::build_pubkey_validity_proof_data;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     extension::{
@@ -53,11 +50,9 @@ pub async fn configure_account_for_confidential_transfers(
         &spl_token_2022::id(),
     );
 
-    // 6.0.1-derived encryption keys.
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(authority, &token_account.to_bytes())
-        .map_err(|e| format!("derive ElGamal keypair: {e}"))?;
-    let aes_key = AeKey::new_from_signer(authority, &token_account.to_bytes())
-        .map_err(|e| format!("derive AES key: {e}"))?;
+    // Standard wallet-level keys (solana-conf-bal/v1): one signature derives
+    // both, bound to the authority's wallet across all of its accounts.
+    let (elgamal_keypair, aes_key) = crate::keys::derive_confidential_keys(authority)?;
 
     let max_pending_balance_credit_counter: u64 = 65536;
 
