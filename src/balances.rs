@@ -53,8 +53,11 @@ fn decode_ciphertext(field: &PodElGamalCiphertext, what: &str) -> CtResult<ElGam
 pub fn read_balances(client: &RpcClient, owner: &dyn Signer, mint: &Pubkey) -> CtResult<Balances> {
     let token_account =
         get_associated_token_address_with_program_id(&owner.pubkey(), mint, &spl_token_2022::id());
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(owner, &token_account.to_bytes())?;
-    let aes_key = AeKey::new_from_signer(owner, &token_account.to_bytes())?;
+    // *_legacy keeps the pre-zk-sdk-7 derivation; existing accounts depend on it.
+    #[allow(deprecated)]
+    let elgamal_keypair = ElGamalKeypair::new_from_signer_legacy(owner, &token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let aes_key = AeKey::new_from_signer_legacy(owner, &token_account.to_bytes())?;
 
     let account_data = client.get_account(&token_account)?;
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
@@ -94,7 +97,8 @@ pub fn read_available_elgamal(
 ) -> CtResult<u64> {
     let token_account =
         get_associated_token_address_with_program_id(&owner.pubkey(), mint, &spl_token_2022::id());
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(owner, &token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let elgamal_keypair = ElGamalKeypair::new_from_signer_legacy(owner, &token_account.to_bytes())?;
     let account_data = client.get_account(&token_account)?;
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
     let ext = account.get_extension::<ConfidentialTransferAccount>()?;

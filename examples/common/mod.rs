@@ -7,6 +7,7 @@ use conf_balances_examples::balances::read_balances;
 use conf_balances_examples::setup::{
     create_and_configure_account, create_confidential_mint, load_keypair_env,
 };
+use conf_balances_examples::send::{send_v1_tx, CU_LIMIT_DEFAULT};
 use conf_balances_examples::{apply_pending, deposit};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
@@ -14,7 +15,6 @@ use solana_keypair::Keypair;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
 use std::env;
 use std::error::Error;
 
@@ -81,14 +81,7 @@ pub async fn setup(num_recipients: usize, funding: u64) -> Result<Scenario, Box<
         &[],
         funding,
     )?;
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
-        &[mint_to_ix],
-        Some(&payer.pubkey()),
-        &[&payer],
-        blockhash,
-    );
-    client.send_and_confirm_transaction(&tx)?;
+    send_v1_tx(&client, &[mint_to_ix], &payer.pubkey(), &[&payer], CU_LIMIT_DEFAULT)?;
 
     println!("💰 Depositing to confidential balance + applying pending...");
     deposit::deposit_to_confidential(&client, &payer, &sender, &mint.pubkey(), funding, DECIMALS)

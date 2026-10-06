@@ -1,11 +1,11 @@
 //! Common test utilities and helpers
 
+use conf_balances_examples::send::{send_v1_tx, CU_LIMIT_DEFAULT};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_keypair::Keypair;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
 use solana_system_interface::instruction as system_instruction;
 use spl_associated_token_account::{
     get_associated_token_address_with_program_id,
@@ -96,15 +96,13 @@ impl TestEnv {
                 lamports,
             );
 
-            let recent_blockhash = self.client.get_latest_blockhash()?;
-            let transaction = Transaction::new_signed_with_payer(
+            let signature = send_v1_tx(
+                &self.client,
                 &[transfer_ix],
-                Some(&self.payer.pubkey()),
+                &self.payer.pubkey(),
                 &[&self.payer],
-                recent_blockhash,
-            );
-
-            let signature = self.client.send_and_confirm_transaction(&transaction)?;
+                CU_LIMIT_DEFAULT,
+            )?;
             println!("✅ Transfer confirmed: {}", signature);
             return Ok(());
         }
@@ -198,16 +196,13 @@ pub fn create_confidential_mint(
         decimals,
     )?;
 
-    // Send transaction
-    let recent_blockhash = env.client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
+    let signature = send_v1_tx(
+        &env.client,
         &[create_account_ix, init_ct_ix, init_mint_ix],
-        Some(&env.payer.pubkey()),
+        &env.payer.pubkey(),
         &[&env.payer, &mint],
-        recent_blockhash,
-    );
-
-    let signature = env.client.send_and_confirm_transaction(&transaction)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     println!("✅ Mint created: {}", signature);
 
     Ok(mint)
@@ -234,15 +229,13 @@ pub fn create_token_account(
         &spl_token_2022::id(),
     );
 
-    let recent_blockhash = env.client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
+    let signature = send_v1_tx(
+        &env.client,
         &[create_ix],
-        Some(&env.payer.pubkey()),
+        &env.payer.pubkey(),
         &[&env.payer],
-        recent_blockhash,
-    );
-
-    let signature = env.client.send_and_confirm_transaction(&transaction)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     println!("✅ Token account created: {}", signature);
 
     Ok(token_account)
@@ -267,15 +260,13 @@ pub fn mint_tokens(
         amount,
     )?;
 
-    let recent_blockhash = env.client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
+    let signature = send_v1_tx(
+        &env.client,
         &[mint_to_ix],
-        Some(&env.payer.pubkey()),
+        &env.payer.pubkey(),
         &[&env.payer, authority],
-        recent_blockhash,
-    );
-
-    let signature = env.client.send_and_confirm_transaction(&transaction)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     println!("✅ Minted tokens: {}", signature);
 
     Ok(())

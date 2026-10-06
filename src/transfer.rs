@@ -1,28 +1,17 @@
 //! Confidential transfer between accounts.
 //!
 //! Generates the three transfer proofs (equality, ciphertext-validity, range)
-//! with `spl-token-confidential-transfer-proof-generation = 0.6.0`
-//! (solana-zk-sdk 6.0.1), pre-verifies each into a context state account, then
-//! references those accounts in spl-token-2022 11.0.0's transfer ix via
-//! `ProofLocation::ContextStateAccount`.
+//! and submits them inline with the transfer in one v1 transaction via
+//! `ProofLocation::InstructionOffset`. The whole flow is ~2.5 KB of the
+//! 4096-byte v1 limit.
 
+use crate::send::{send_v1_tx, CU_LIMIT_TRANSFER};
 use crate::types::*;
-use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
-use solana_pubkey::Pubkey;
 use solana_keypair::Keypair;
+use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
-use solana_system_interface::instruction as system_instruction;
-use solana_zk_elgamal_proof_interface::{
-    instruction::{close_context_state, ContextStateInfo, ProofInstruction},
-    proof_data::{
-        BatchedGroupedCiphertext3HandlesValidityProofContext, BatchedRangeProofContext,
-        CiphertextCommitmentEqualityProofContext,
-    },
-    state::ProofContextState,
-};
 use solana_zk_sdk::encryption::{
     auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey},
@@ -32,11 +21,7 @@ use spl_associated_token_account::get_associated_token_address_with_program_id;
 use spl_token_2022::{
     extension::{
         confidential_transfer::{
-            instruction::{
-                inner_transfer, BatchedGroupedCiphertext3HandlesValidityProofData,
-                BatchedRangeProofU128Data, CiphertextCommitmentEqualityProofData,
-            },
-            ConfidentialTransferAccount, ConfidentialTransferMint,
+            instruction::transfer, ConfidentialTransferAccount, ConfidentialTransferMint,
         },
         BaseStateWithExtensions, StateWithExtensions,
     },
@@ -44,10 +29,7 @@ use spl_token_2022::{
 };
 use spl_token_confidential_transfer_proof_extraction::instruction::ProofLocation;
 use spl_token_confidential_transfer_proof_generation::transfer::transfer_split_proof_data;
-use std::mem::size_of;
-
-pub(crate) const ZK_PROOF_PROGRAM_ID: Pubkey =
-    solana_pubkey::pubkey!("ZkE1Gama1Proof11111111111111111111111111111");
+use std::num::NonZeroI8;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn transfer_confidential(
@@ -124,9 +106,13 @@ pub async fn transfer_confidential_with_progress(
         "derive-keys",
         "Deriving sender's ElGamal and AES keys from authority signature",
     );
-    let sender_elgamal = ElGamalKeypair::new_from_signer(sender, &sender_token_account.to_bytes())
-        .map_err(|e| format!("derive sender ElGamal: {e}"))?;
-    let sender_aes = AeKey::new_from_signer(sender, &sender_token_account.to_bytes())
+    // *_legacy keeps the pre-zk-sdk-7 derivation; existing accounts depend on it.
+    #[allow(deprecated)]
+    let sender_elgamal =
+        ElGamalKeypair::new_from_signer_legacy(sender, &sender_token_account.to_bytes())
+            .map_err(|e| format!("derive sender ElGamal: {e}"))?;
+    #[allow(deprecated)]
+    let sender_aes = AeKey::new_from_signer_legacy(sender, &sender_token_account.to_bytes())
         .map_err(|e| format!("derive sender AES: {e}"))?;
 
     // ----- Sender state: available balance + decryptable available balance -----
@@ -145,7 +131,7 @@ pub async fn transfer_confidential_with_progress(
 
     phase(
         "generate-proofs",
-        "Generating equality, ciphertext-validity, and range proofs (zk-sdk 6.0.1)",
+        "Generating equality, ciphertext-validity, and range proofs",
     );
     let proof_data = transfer_split_proof_data(
         &current_available,
@@ -157,108 +143,6 @@ pub async fn transfer_confidential_with_progress(
         auditor_elgamal_pubkey.as_ref(),
     )
     .map_err(|e| format!("transfer_split_proof_data: {e}"))?;
-
-    phase(
-        "create-proof-accounts",
-        "Allocating + verifying 3 proof context state accounts",
-    );
-
-    let mut signatures: Vec<Signature> = Vec::new();
-
-    // Build all three proof accounts up front so we can batch where possible.
-    let equality_account = Keypair::new();
-    let validity_account = Keypair::new();
-    let range_account = Keypair::new();
-
-    let equality_size = size_of::<ProofContextState<CiphertextCommitmentEqualityProofContext>>();
-    let validity_size =
-        size_of::<ProofContextState<BatchedGroupedCiphertext3HandlesValidityProofContext>>();
-    let range_size = size_of::<ProofContextState<BatchedRangeProofContext>>();
-
-    let equality_rent = client.get_minimum_balance_for_rent_exemption(equality_size)?;
-    let validity_rent = client.get_minimum_balance_for_rent_exemption(validity_size)?;
-    let range_rent = client.get_minimum_balance_for_rent_exemption(range_size)?;
-
-    let equality_create_ix = system_instruction::create_account(
-        &payer.pubkey(),
-        &equality_account.pubkey(),
-        equality_rent,
-        equality_size as u64,
-        &ZK_PROOF_PROGRAM_ID,
-    );
-    let validity_create_ix = system_instruction::create_account(
-        &payer.pubkey(),
-        &validity_account.pubkey(),
-        validity_rent,
-        validity_size as u64,
-        &ZK_PROOF_PROGRAM_ID,
-    );
-    let range_create_ix = system_instruction::create_account(
-        &payer.pubkey(),
-        &range_account.pubkey(),
-        range_rent,
-        range_size as u64,
-        &ZK_PROOF_PROGRAM_ID,
-    );
-
-    // Use payer (not sender) as the context-state authority on all three
-    // proof accounts. This keeps sender out of the verify txs' account_keys
-    // — saves 32 bytes per tx, which is the difference between fitting and
-    // overflowing the 1232-byte legacy size limit on `range_verify`. Closes
-    // are then signed by payer too.
-    let payer_addr: Address = payer.pubkey().to_bytes().into();
-    let equality_verify_ix = ProofInstruction::VerifyCiphertextCommitmentEquality
-        .encode_verify_proof(
-            Some(ContextStateInfo {
-                context_state_account: &Address::from(equality_account.pubkey().to_bytes()),
-                context_state_authority: &payer_addr,
-            }),
-            &proof_data.equality_proof_data,
-        );
-    let validity_verify_ix = ProofInstruction::VerifyBatchedGroupedCiphertext3HandlesValidity
-        .encode_verify_proof(
-            Some(ContextStateInfo {
-                context_state_account: &Address::from(validity_account.pubkey().to_bytes()),
-                context_state_authority: &payer_addr,
-            }),
-            &proof_data
-                .ciphertext_validity_proof_data_with_ciphertext
-                .proof_data,
-        );
-    let range_verify_ix = ProofInstruction::VerifyBatchedRangeProofU128.encode_verify_proof(
-        Some(ContextStateInfo {
-            context_state_account: &Address::from(range_account.pubkey().to_bytes()),
-            context_state_authority: &payer_addr,
-        }),
-        &proof_data.range_proof_data,
-    );
-
-    // Tx 1: create all 3 proof accounts + verify the validity proof. The
-    // validity proof's context data is the largest of eq/val (~544 vs ~320),
-    // so it pairs with the small creates here; equality goes alongside the
-    // transfer below where there's headroom.
-    let sig = send_tx(
-        client,
-        &[
-            equality_create_ix,
-            validity_create_ix,
-            range_create_ix,
-            validity_verify_ix,
-        ],
-        &[payer, &equality_account, &validity_account, &range_account],
-        &payer.pubkey(),
-    )?;
-    sig_event("create-proof-accounts+verify-validity", &sig);
-    signatures.push(sig);
-
-    // Tx 2: verify the range proof on its own. ~1006-byte verify ix; with
-    // payer as authority and 3 account keys, lands at ~1206 bytes — under
-    // Solana's 1232-byte legacy size limit, but only just.
-    let sig = send_tx(client, &[range_verify_ix], &[payer], &payer.pubkey())?;
-    sig_event("range-proof-account-verify", &sig);
-    signatures.push(sig);
-
-    phase("submit-transfer", "Submitting confidential transfer instruction");
 
     // New decryptable available balance for the sender (post-transfer).
     let current_avail_plaintext = current_decryptable
@@ -276,14 +160,24 @@ pub async fn transfer_confidential_with_progress(
         .ciphertext_validity_proof_data_with_ciphertext
         .ciphertext_hi;
 
-    let equality_loc: ProofLocation<CiphertextCommitmentEqualityProofData> =
-        ProofLocation::ContextStateAccount(&equality_account.pubkey());
-    let validity_loc: ProofLocation<BatchedGroupedCiphertext3HandlesValidityProofData> =
-        ProofLocation::ContextStateAccount(&validity_account.pubkey());
-    let range_loc: ProofLocation<BatchedRangeProofU128Data> =
-        ProofLocation::ContextStateAccount(&range_account.pubkey());
+    // The `transfer` builder enforces offsets 1/2/3 and appends the three
+    // VerifyProof instructions after the transfer instruction itself.
+    let equality_loc = ProofLocation::InstructionOffset(
+        NonZeroI8::new(1).unwrap(),
+        &proof_data.equality_proof_data,
+    );
+    let validity_loc = ProofLocation::InstructionOffset(
+        NonZeroI8::new(2).unwrap(),
+        &proof_data
+            .ciphertext_validity_proof_data_with_ciphertext
+            .proof_data,
+    );
+    let range_loc = ProofLocation::InstructionOffset(
+        NonZeroI8::new(3).unwrap(),
+        &proof_data.range_proof_data,
+    );
 
-    let transfer_ix = inner_transfer(
+    let ixs = transfer(
         &spl_token_2022::id(),
         &sender_token_account,
         mint,
@@ -299,50 +193,12 @@ pub async fn transfer_confidential_with_progress(
     )?;
 
     phase(
-        "verify-eq+transfer+close",
-        "Verifying equality proof, submitting transfer, closing proof accounts",
+        "submit-transfer",
+        "Submitting one v1 transaction: transfer + 3 inline ZK proofs",
     );
-
-    // Tx 3: equality verify + transfer + 3 closes. Equality is the smallest
-    // verify (~328-byte ix), and transfer + 3 closes is only ~210 bytes of ix
-    // data, so this all fits in one tx (~1015 bytes). Close ixs use payer as
-    // the context-state authority so only payer signs the closes; sender
-    // still signs because it's the transfer's token-account authority.
-    let close_eq = close_context_state(
-        ContextStateInfo {
-            context_state_account: &Address::from(equality_account.pubkey().to_bytes()),
-            context_state_authority: &payer_addr,
-        },
-        &payer_addr,
-    );
-    let close_val = close_context_state(
-        ContextStateInfo {
-            context_state_account: &Address::from(validity_account.pubkey().to_bytes()),
-            context_state_authority: &payer_addr,
-        },
-        &payer_addr,
-    );
-    let close_range = close_context_state(
-        ContextStateInfo {
-            context_state_account: &Address::from(range_account.pubkey().to_bytes()),
-            context_state_authority: &payer_addr,
-        },
-        &payer_addr,
-    );
-    let sig = send_tx(
-        client,
-        &[
-            equality_verify_ix,
-            transfer_ix,
-            close_eq,
-            close_val,
-            close_range,
-        ],
-        &[payer, sender],
-        &payer.pubkey(),
-    )?;
-    sig_event("verify-eq+transfer+close", &sig);
-    signatures.push(sig);
+    let sig = send_v1_tx(client, &ixs, &payer.pubkey(), &[payer, sender], CU_LIMIT_TRANSFER)?;
+    sig_event("transfer+proofs", &sig);
+    let signatures = vec![sig];
 
     emit(
         progress,
@@ -350,25 +206,6 @@ pub async fn transfer_confidential_with_progress(
             sigs: signatures.iter().map(|s| s.to_string()).collect(),
         },
     );
-    println!(
-        "✅ Confidential transfer complete with {} transactions",
-        signatures.len()
-    );
+    println!("✅ Confidential transfer complete: {sig}");
     Ok(signatures)
-}
-
-// ----------------------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------------------
-
-/// Send a single tx, return the signature.
-pub(crate) fn send_tx(
-    client: &RpcClient,
-    ixs: &[solana_instruction::Instruction],
-    signers: &[&dyn Signer],
-    payer: &Pubkey,
-) -> CtResult<Signature> {
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(ixs, Some(payer), signers, blockhash);
-    Ok(client.send_and_confirm_transaction(&tx)?)
 }

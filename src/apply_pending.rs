@@ -1,14 +1,12 @@
 //! Apply pending balance to available balance.
 //!
 //! Decrypts pending + available balances, re-encrypts the new available
-//! balance with AES, and submits the `ApplyPendingBalance` instruction. Every
-//! type is solana-zk-sdk 6.0.1, matching spl-token-2022 11.0.0's account
-//! layout directly.
+//! balance with AES, and submits the `ApplyPendingBalance` instruction.
 
+use crate::send::{send_v1_tx, CU_LIMIT_DEFAULT};
 use crate::types::*;
 use solana_client::rpc_client::RpcClient;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
 use solana_zk_sdk::encryption::{
     auth_encryption::{AeCiphertext, AeKey},
     elgamal::{ElGamalCiphertext, ElGamalKeypair},
@@ -38,9 +36,12 @@ pub async fn apply_pending_balance(
         &spl_token_2022::id(),
     );
 
-    // 6.0.1 key derivation.
-    let elgamal_keypair = ElGamalKeypair::new_from_signer(authority, &token_account.to_bytes())?;
-    let aes_key = AeKey::new_from_signer(authority, &token_account.to_bytes())?;
+    // *_legacy keeps the pre-zk-sdk-7 derivation; existing accounts depend on it.
+    #[allow(deprecated)]
+    let elgamal_keypair =
+        ElGamalKeypair::new_from_signer_legacy(authority, &token_account.to_bytes())?;
+    #[allow(deprecated)]
+    let aes_key = AeKey::new_from_signer_legacy(authority, &token_account.to_bytes())?;
 
     let account_data = client.get_account(&token_account)?;
     let account = StateWithExtensions::<TokenAccount>::unpack(&account_data.data)?;
@@ -91,15 +92,13 @@ pub async fn apply_pending_balance(
         &[&authority.pubkey()],
     )?;
 
-    let recent_blockhash = client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
+    let signature = send_v1_tx(
+        client,
         &[apply_ix],
-        Some(&payer.pubkey()),
+        &payer.pubkey(),
         &[payer, authority],
-        recent_blockhash,
-    );
-
-    let signature = client.send_and_confirm_transaction(&transaction)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     println!(
         "✅ Applied pending balance. New available: {} tokens. Tx: {}",
         new_available, signature

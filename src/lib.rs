@@ -4,6 +4,7 @@
 //! using the latest API versions specified in docs/reference/rust-deps.md
 
 pub mod types;
+pub mod send;
 pub mod configure;
 pub mod deposit;
 pub mod apply_pending;

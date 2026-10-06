@@ -1,5 +1,5 @@
-//! Example: Run a confidential transfer on devnet (or any cluster whose
-//! deployed ZK ElGamal Proof program matches solana-zk-sdk = 6.0.1).
+//! Example: Run a confidential transfer on devnet (or any cluster running
+//! agave >= 4.1, which the v1 transaction format requires).
 //!
 //! Usage:
 //! SOLANA_RPC_URL=https://api.devnet.solana.com PAYER_KEYPAIR=$(cat ~/.config/solana/id.json) cargo run --example run_transfer
@@ -8,6 +8,7 @@ use conf_balances_examples::balances::read_balances;
 use conf_balances_examples::setup::{
     create_and_configure_account, create_confidential_mint, load_keypair_env,
 };
+use conf_balances_examples::send::{send_v1_tx, CU_LIMIT_DEFAULT};
 use conf_balances_examples::{apply_pending, deposit, transfer};
 use solana_client::rpc_client::RpcClient;
 use solana_commitment_config::CommitmentConfig;
@@ -15,7 +16,6 @@ use solana_keypair::Keypair;
 use solana_native_token::LAMPORTS_PER_SOL;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
-use solana_transaction::Transaction;
 use spl_associated_token_account::get_associated_token_address_with_program_id;
 use std::env;
 
@@ -90,14 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &[],
         1_000_000_000,
     )?;
-    let recent_blockhash = client.get_latest_blockhash()?;
-    let transaction = Transaction::new_signed_with_payer(
-        &[mint_to_ix],
-        Some(&payer.pubkey()),
-        &[&payer],
-        recent_blockhash,
-    );
-    client.send_and_confirm_transaction(&transaction)?;
+    send_v1_tx(&client, &[mint_to_ix], &payer.pubkey(), &[&payer], CU_LIMIT_DEFAULT)?;
 
     display_balances(&client, "Sender (after mint)", sender, &mint.pubkey())?;
     display_balances(&client, "Recipient (initial)", &recipient, &mint.pubkey())?;
@@ -112,10 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     display_balances(&client, "Sender (after apply)", sender, &mint.pubkey())?;
 
     println!("\n🔐 Executing confidential transfer...");
-    println!("   This will create 3 transactions:");
-    println!("   - proof account creations + validity proof verification");
-    println!("   - range proof verification");
-    println!("   - equality proof verification + transfer + proof account closures");
+    println!("   One v1 transaction: transfer + 3 inline ZK proofs");
 
     let signatures = transfer::transfer_confidential(
         &client,

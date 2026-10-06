@@ -5,13 +5,13 @@
 use crate::configure::{
     configure_account_for_confidential_transfers, configure_account_with_extensions,
 };
+use crate::send::{send_v1_tx, CU_LIMIT_DEFAULT};
 use crate::types::*;
 use solana_client::rpc_client::RpcClient;
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 use solana_system_interface::instruction as system_instruction;
-use solana_transaction::Transaction;
 use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
 use solana_zk_sdk_pod::encryption::elgamal::PodElGamalPubkey;
 use spl_associated_token_account::instruction::create_associated_token_account;
@@ -76,14 +76,13 @@ pub fn create_confidential_mint(
         decimals,
     )?;
 
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
+    send_v1_tx(
+        client,
         &[create_account_ix, init_ct_ix, init_mint_ix],
-        Some(&payer.pubkey()),
+        &payer.pubkey(),
         &[payer, &mint],
-        blockhash,
-    );
-    client.send_and_confirm_transaction(&tx)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     Ok(mint)
 }
 
@@ -163,8 +162,8 @@ pub fn create_confidential_fee_mint(
         decimals,
     )?;
 
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
+    send_v1_tx(
+        client,
         &[
             create_account_ix,
             init_ct_ix,
@@ -173,11 +172,10 @@ pub fn create_confidential_fee_mint(
             init_delegate_ix,
             init_mint_ix,
         ],
-        Some(&payer.pubkey()),
+        &payer.pubkey(),
         &[payer, &mint],
-        blockhash,
-    );
-    client.send_and_confirm_transaction(&tx)?;
+        CU_LIMIT_DEFAULT,
+    )?;
     Ok(mint)
 }
 
@@ -195,14 +193,7 @@ pub async fn create_and_configure_account(
         mint,
         &spl_token_2022::id(),
     );
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
-        &[create_ata_ix],
-        Some(&payer.pubkey()),
-        &[payer],
-        blockhash,
-    );
-    client.send_and_confirm_transaction(&tx)?;
+    send_v1_tx(client, &[create_ata_ix], &payer.pubkey(), &[payer], CU_LIMIT_DEFAULT)?;
 
     configure_account_for_confidential_transfers(client, payer, owner, mint).await?;
     Ok(())
@@ -223,14 +214,7 @@ pub async fn create_and_configure_fee_account(
         mint,
         &spl_token_2022::id(),
     );
-    let blockhash = client.get_latest_blockhash()?;
-    let tx = Transaction::new_signed_with_payer(
-        &[create_ata_ix],
-        Some(&payer.pubkey()),
-        &[payer],
-        blockhash,
-    );
-    client.send_and_confirm_transaction(&tx)?;
+    send_v1_tx(client, &[create_ata_ix], &payer.pubkey(), &[payer], CU_LIMIT_DEFAULT)?;
 
     configure_account_with_extensions(
         client,
