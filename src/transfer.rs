@@ -576,4 +576,42 @@ mod tests {
         let err = balance(1u64 << 33, 0).unwrap_err().to_string();
         assert!(err.contains("out of sync"), "{err}");
     }
+
+    /// The bug itself: a stale cache on a balance past the window kills proof
+    /// generation, and the recovered balance revives it. Both calls here are
+    /// pure, so this is the regression test for the fix.
+    #[test]
+    fn proof_generation_needs_the_recovered_balance() {
+        let elgamal = ElGamalKeypair::new_rand();
+        let aes = AeKey::new_rand();
+        let recipient = *ElGamalKeypair::new_rand().pubkey();
+
+        let available = (1u64 << 40) + 25_000;
+        let available_ciphertext = elgamal.pubkey().encrypt(available);
+        let stale = aes.encrypt(available - 7_500);
+        let amount = 10_000;
+
+        let proofs = |cache| {
+            transfer_split_proof_data(
+                &available_ciphertext,
+                cache,
+                amount,
+                &elgamal,
+                &aes,
+                &recipient,
+                None,
+            )
+        };
+
+        assert!(proofs(&stale).is_err());
+
+        let recovered = available_balance(&available_ciphertext, &stale, &elgamal, &aes).unwrap();
+        assert_eq!(recovered, available);
+        let refreshed = aes.encrypt(recovered);
+        assert!(proofs(&refreshed).is_ok());
+
+        // What the transfer ix writes back as the new cache.
+        let remaining = refreshed.decrypt(&aes).unwrap() - amount;
+        assert_eq!(remaining, available - amount);
+    }
 }
