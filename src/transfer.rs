@@ -161,8 +161,22 @@ pub async fn transfer_confidential_with_progress(
         cast_elgamal_ciphertext_legacy_to_v6(&sender_ext.available_balance)?
             .try_into()
             .map_err(|e| format!("sender available balance: {e:?}"))?;
-    let current_decryptable_v6: AeCiphertext =
+    let stored_decryptable: AeCiphertext =
         cast_ae_ciphertext_legacy_to_v6(&sender_ext.decryptable_available_balance)?;
+
+    // The program validates proofs against the ElGamal balance and never reads
+    // the AES cache. Decrypting their difference keeps this correct past 2^32.
+    let aes_view = sender_aes
+        .decrypt(&stored_decryptable)
+        .ok_or("decrypt sender decryptable_available_balance")?;
+    let missed = current_available_v6
+        .subtract_amount(aes_view)
+        .decrypt_u32(sender_elgamal.secret())
+        .ok_or("sender AES balance is out of sync by more than 2^32")?;
+    let available_amount = aes_view
+        .checked_add(missed)
+        .ok_or("sender available balance overflow")?;
+    let current_decryptable_v6 = sender_aes.encrypt(available_amount);
 
     phase(
         "generate-proofs",
