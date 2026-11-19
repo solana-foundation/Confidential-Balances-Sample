@@ -25,8 +25,8 @@ use solana_zk_elgamal_proof_interface::{
     state::ProofContextState,
 };
 use solana_zk_sdk::encryption::{
-    auth_encryption::AeCiphertext,
-    elgamal::{ElGamalCiphertext, ElGamalPubkey},
+    auth_encryption::{AeCiphertext, AeKey},
+    elgamal::{ElGamalCiphertext, ElGamalKeypair, ElGamalPubkey},
 };
 use solana_zk_sdk_pod::encryption::elgamal::{
     PodElGamalCiphertext as PodElGamalCiphertextV6, PodElGamalPubkey as PodElGamalPubkeyV6,
@@ -161,8 +161,16 @@ pub async fn transfer_confidential_with_progress(
         cast_elgamal_ciphertext_legacy_to_v6(&sender_ext.available_balance)?
             .try_into()
             .map_err(|e| format!("sender available balance: {e:?}"))?;
-    let current_decryptable_v6: AeCiphertext =
+    let stored_decryptable: AeCiphertext =
         cast_ae_ciphertext_legacy_to_v6(&sender_ext.decryptable_available_balance)?;
+
+    let available_amount = available_balance(
+        &current_available_v6,
+        &stored_decryptable,
+        &sender_elgamal,
+        &sender_aes,
+    )?;
+    let current_decryptable_v6 = sender_aes.encrypt(available_amount);
 
     phase(
         "generate-proofs",
@@ -379,6 +387,29 @@ pub async fn transfer_confidential_with_progress(
 // Helpers
 // ----------------------------------------------------------------------------
 
+/// The sender's available balance, read off the ElGamal ciphertext the program
+/// validates proofs against. The AES cache is only the starting point: an apply
+/// that raced an incoming credit leaves it short, so the remainder comes off the
+/// ElGamal side. Decrypting the gap rather than the balance keeps the full u64
+/// range spendable.
+fn available_balance(
+    available: &ElGamalCiphertext,
+    cached: &AeCiphertext,
+    elgamal: &ElGamalKeypair,
+    aes: &AeKey,
+) -> CtResult<u64> {
+    let cached_amount = aes
+        .decrypt(cached)
+        .ok_or("decrypt sender decryptable_available_balance")?;
+    let missed = available
+        .subtract_amount(cached_amount)
+        .decrypt_u32(elgamal.secret())
+        .ok_or("sender AES balance is out of sync by more than 2^32")?;
+    cached_amount
+        .checked_add(missed)
+        .ok_or_else(|| "sender available balance overflow".into())
+}
+
 /// Create an spl-record account owned by `payer` (as record authority) and
 /// write `proof_bytes` into it in tx-sized chunks. The first tx allocates +
 /// initializes + writes the first chunk; subsequent chunks are write-only.
@@ -506,4 +537,81 @@ fn cast_ae_ciphertext_legacy_to_v6(legacy: &PodAeCiphertextLegacy) -> CtResult<A
 
 fn cast_ae_ciphertext_v6_to_legacy(v6: &AeCiphertext) -> PodAeCiphertextLegacy {
     PodAeCiphertextLegacy::from(v6.to_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn balance(available: u64, cached: u64) -> CtResult<u64> {
+        let elgamal = ElGamalKeypair::new_rand();
+        let aes = AeKey::new_rand();
+        available_balance(
+            &elgamal.pubkey().encrypt(available),
+            &aes.encrypt(cached),
+            &elgamal,
+            &aes,
+        )
+    }
+
+    #[test]
+    fn a_cache_in_sync_is_the_balance() {
+        assert_eq!(balance(1_000, 1_000).unwrap(), 1_000);
+    }
+
+    #[test]
+    fn a_stale_cache_picks_up_the_missed_credit() {
+        assert_eq!(balance(1_500, 1_000).unwrap(), 1_500);
+    }
+
+    #[test]
+    fn a_stale_cache_past_the_discrete_log_window_still_resolves() {
+        // Decrypting the balance itself would fail here; the gap is small.
+        let available = (1u64 << 40) + 25_000;
+        assert_eq!(balance(available, available - 7_500).unwrap(), available);
+    }
+
+    #[test]
+    fn a_gap_wider_than_the_window_is_an_error() {
+        let err = balance(1u64 << 33, 0).unwrap_err().to_string();
+        assert!(err.contains("out of sync"), "{err}");
+    }
+
+    /// The bug itself: a stale cache on a balance past the window kills proof
+    /// generation, and the recovered balance revives it. Both calls here are
+    /// pure, so this is the regression test for the fix.
+    #[test]
+    fn proof_generation_needs_the_recovered_balance() {
+        let elgamal = ElGamalKeypair::new_rand();
+        let aes = AeKey::new_rand();
+        let recipient = *ElGamalKeypair::new_rand().pubkey();
+
+        let available = (1u64 << 40) + 25_000;
+        let available_ciphertext = elgamal.pubkey().encrypt(available);
+        let stale = aes.encrypt(available - 7_500);
+        let amount = 10_000;
+
+        let proofs = |cache| {
+            transfer_split_proof_data(
+                &available_ciphertext,
+                cache,
+                amount,
+                &elgamal,
+                &aes,
+                &recipient,
+                None,
+            )
+        };
+
+        assert!(proofs(&stale).is_err());
+
+        let recovered = available_balance(&available_ciphertext, &stale, &elgamal, &aes).unwrap();
+        assert_eq!(recovered, available);
+        let refreshed = aes.encrypt(recovered);
+        assert!(proofs(&refreshed).is_ok());
+
+        // What the transfer ix writes back as the new cache.
+        let remaining = refreshed.decrypt(&aes).unwrap() - amount;
+        assert_eq!(remaining, available - amount);
+    }
 }
